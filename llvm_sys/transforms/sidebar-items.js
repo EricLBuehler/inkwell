@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["instcombine","ipo","pass_builder","pass_manager_builder","scalar","util","vectorize"]};

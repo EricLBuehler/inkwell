@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["PassBuilderOptions","PassManager","PassManagerBuilder","PassRegistry"],"trait":["PassManagerSubType"]};
