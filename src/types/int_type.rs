@@ -1,15 +1,14 @@
 use llvm_sys::core::{
-    LLVMConstAllOnes, LLVMConstArray, LLVMConstInt, LLVMConstIntOfArbitraryPrecision, LLVMConstIntOfStringAndSize,
-    LLVMGetIntTypeWidth,
+    LLVMConstAllOnes, LLVMConstInt, LLVMConstIntOfArbitraryPrecision, LLVMConstIntOfStringAndSize, LLVMGetIntTypeWidth,
 };
 use llvm_sys::execution_engine::LLVMCreateGenericValueOfInt;
-use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+use llvm_sys::prelude::LLVMTypeRef;
 
 use crate::context::ContextRef;
 use crate::support::LLVMString;
 use crate::types::traits::AsTypeRef;
-use crate::types::{ArrayType, FunctionType, PointerType, Type, VectorType};
-use crate::values::{ArrayValue, AsValueRef, GenericValue, IntValue};
+use crate::types::{ArrayType, FunctionType, PointerType, ScalableVectorType, Type, VectorType};
+use crate::values::{ArrayValue, GenericValue, IntValue};
 use crate::AddressSpace;
 
 use crate::types::enums::BasicMetadataTypeEnum;
@@ -58,14 +57,7 @@ impl StringRadix {
         }
 
         // and all digits must be in the radix' character set
-        let mut it = slice.chars();
-        match self {
-            StringRadix::Binary => it.all(|c| matches!(c, '0'..='1')),
-            StringRadix::Octal => it.all(|c| matches!(c, '0'..='7')),
-            StringRadix::Decimal => it.all(|c| matches!(c, '0'..='9')),
-            StringRadix::Hexadecimal => it.all(|c| matches!(c, '0'..='9' | 'a'..='f' | 'A'..='F')),
-            StringRadix::Alphanumeric => it.all(|c| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z')),
-        }
+        slice.chars().all(|c| c.is_digit(*self as u32))
     }
 }
 
@@ -252,6 +244,25 @@ impl<'ctx> IntType<'ctx> {
         self.int_type.vec_type(size)
     }
 
+    /// Creates a `ScalableVectorType` with this `IntType` for its element type.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    ///
+    /// let context = Context::create();
+    /// let i8_type = context.i8_type();
+    /// let i8_scalable_vector_type = i8_type.scalable_vec_type(3);
+    ///
+    /// assert_eq!(i8_scalable_vector_type.get_size(), 3);
+    /// assert_eq!(i8_scalable_vector_type.get_element_type().into_int_type(), i8_type);
+    /// ```
+    #[llvm_versions(12..)]
+    pub fn scalable_vec_type(self, size: u32) -> ScalableVectorType<'ctx> {
+        self.int_type.scalable_vec_type(size)
+    }
+
     /// Gets a reference to the `Context` this `IntType` was created in.
     ///
     /// # Example
@@ -325,6 +336,17 @@ impl<'ctx> IntType<'ctx> {
     /// ))]
     /// assert_eq!(i8_ptr_type.get_element_type().into_int_type(), i8_type);
     /// ```
+    #[cfg_attr(
+        any(
+            feature = "llvm15-0",
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
+        ),
+        deprecated(
+            note = "Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead."
+        )
+    )]
     pub fn ptr_type(self, address_space: AddressSpace) -> PointerType<'ctx> {
         self.int_type.ptr_type(address_space)
     }
@@ -380,7 +402,7 @@ impl<'ctx> IntType<'ctx> {
     ///
     /// assert!(i8_poison.is_poison());
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_poison(self) -> IntValue<'ctx> {
         unsafe { IntValue::new(self.int_type.get_poison()) }
     }
@@ -405,14 +427,7 @@ impl<'ctx> IntType<'ctx> {
     /// assert!(i8_array.is_const());
     /// ```
     pub fn const_array(self, values: &[IntValue<'ctx>]) -> ArrayValue<'ctx> {
-        let mut values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
-        unsafe {
-            ArrayValue::new(LLVMConstArray(
-                self.as_type_ref(),
-                values.as_mut_ptr(),
-                values.len() as u32,
-            ))
-        }
+        unsafe { ArrayValue::new_const_array(&self, values) }
     }
 }
 

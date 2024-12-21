@@ -1,16 +1,19 @@
-#[llvm_versions(4.0..=15.0)]
+#[llvm_versions(..=17)]
+use crate::types::IntType;
+#[llvm_versions(..=15)]
 use llvm_sys::core::LLVMConstFNeg;
-use llvm_sys::core::{
-    LLVMConstFCmp, LLVMConstFPCast, LLVMConstFPExt, LLVMConstFPToSI, LLVMConstFPToUI, LLVMConstFPTrunc,
-    LLVMConstRealGetDouble,
-};
+use llvm_sys::core::{LLVMConstFCmp, LLVMConstRealGetDouble};
+#[llvm_versions(..=17)]
+use llvm_sys::core::{LLVMConstFPCast, LLVMConstFPExt, LLVMConstFPToSI, LLVMConstFPToUI, LLVMConstFPTrunc};
 use llvm_sys::prelude::LLVMValueRef;
 
 use std::convert::TryFrom;
 use std::ffi::CStr;
 use std::fmt::{self, Display};
 
-use crate::types::{AsTypeRef, FloatType, IntType};
+#[llvm_versions(..=17)]
+use crate::types::AsTypeRef;
+use crate::types::FloatType;
 use crate::values::traits::AsValueRef;
 use crate::values::{InstructionValue, IntValue, Value};
 use crate::FloatPredicate;
@@ -23,7 +26,12 @@ pub struct FloatValue<'ctx> {
 }
 
 impl<'ctx> FloatValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Self {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type float.
+    pub unsafe fn new(value: LLVMValueRef) -> Self {
         assert!(!value.is_null());
 
         FloatValue {
@@ -62,62 +70,67 @@ impl<'ctx> FloatValue<'ctx> {
         self.float_value.as_instruction()
     }
 
-    #[llvm_versions(4.0..=15.0)]
+    #[llvm_versions(..=15)]
     pub fn const_neg(self) -> Self {
         unsafe { FloatValue::new(LLVMConstFNeg(self.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_add(self, rhs: FloatValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstFAdd;
 
         unsafe { FloatValue::new(LLVMConstFAdd(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_sub(self, rhs: FloatValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstFSub;
 
         unsafe { FloatValue::new(LLVMConstFSub(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_mul(self, rhs: FloatValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstFMul;
 
         unsafe { FloatValue::new(LLVMConstFMul(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_div(self, rhs: FloatValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstFDiv;
 
         unsafe { FloatValue::new(LLVMConstFDiv(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_remainder(self, rhs: FloatValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstFRem;
 
         unsafe { FloatValue::new(LLVMConstFRem(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_cast(self, float_type: FloatType<'ctx>) -> Self {
         unsafe { FloatValue::new(LLVMConstFPCast(self.as_value_ref(), float_type.as_type_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_to_unsigned_int(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstFPToUI(self.as_value_ref(), int_type.as_type_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_to_signed_int(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstFPToSI(self.as_value_ref(), int_type.as_type_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_truncate(self, float_type: FloatType<'ctx>) -> FloatValue<'ctx> {
         unsafe { FloatValue::new(LLVMConstFPTrunc(self.as_value_ref(), float_type.as_type_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_extend(self, float_type: FloatType<'ctx>) -> FloatValue<'ctx> {
         unsafe { FloatValue::new(LLVMConstFPExt(self.as_value_ref(), float_type.as_type_ref())) }
     }

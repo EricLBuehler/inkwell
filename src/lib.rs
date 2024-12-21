@@ -9,6 +9,7 @@
 //! * Most functions which take a string slice as input may possibly panic in the unlikely event that a c style string cannot be created based on it. (IE if your slice already has a null byte in it)
 
 #![deny(missing_debug_implementations)]
+#![allow(clippy::missing_safety_doc, clippy::too_many_arguments, clippy::result_unit_err)]
 #![cfg_attr(feature = "nightly", feature(doc_cfg))]
 
 #[macro_use]
@@ -42,40 +43,47 @@ pub mod values;
 
 // Boilerplate to select a desired llvm_sys version at compile & link time.
 #[cfg(feature = "llvm10-0")]
-extern crate llvm_sys_100 as llvm_sys;
+pub extern crate llvm_sys_100 as llvm_sys;
 #[cfg(feature = "llvm11-0")]
-extern crate llvm_sys_110 as llvm_sys;
+pub extern crate llvm_sys_110 as llvm_sys;
 #[cfg(feature = "llvm12-0")]
-extern crate llvm_sys_120 as llvm_sys;
+pub extern crate llvm_sys_120 as llvm_sys;
 #[cfg(feature = "llvm13-0")]
-extern crate llvm_sys_130 as llvm_sys;
+pub extern crate llvm_sys_130 as llvm_sys;
 #[cfg(feature = "llvm14-0")]
-extern crate llvm_sys_140 as llvm_sys;
+pub extern crate llvm_sys_140 as llvm_sys;
 #[cfg(feature = "llvm15-0")]
-extern crate llvm_sys_150 as llvm_sys;
+pub extern crate llvm_sys_150 as llvm_sys;
 #[cfg(feature = "llvm16-0")]
-extern crate llvm_sys_160 as llvm_sys;
+pub extern crate llvm_sys_160 as llvm_sys;
+#[cfg(feature = "llvm17-0")]
+pub extern crate llvm_sys_170 as llvm_sys;
+#[cfg(feature = "llvm18-0")]
+pub extern crate llvm_sys_180 as llvm_sys;
 #[cfg(feature = "llvm4-0")]
-extern crate llvm_sys_40 as llvm_sys;
+pub extern crate llvm_sys_40 as llvm_sys;
 #[cfg(feature = "llvm5-0")]
-extern crate llvm_sys_50 as llvm_sys;
+pub extern crate llvm_sys_50 as llvm_sys;
 #[cfg(feature = "llvm6-0")]
-extern crate llvm_sys_60 as llvm_sys;
+pub extern crate llvm_sys_60 as llvm_sys;
 #[cfg(feature = "llvm7-0")]
-extern crate llvm_sys_70 as llvm_sys;
+pub extern crate llvm_sys_70 as llvm_sys;
 #[cfg(feature = "llvm8-0")]
-extern crate llvm_sys_80 as llvm_sys;
+pub extern crate llvm_sys_80 as llvm_sys;
 #[cfg(feature = "llvm9-0")]
-extern crate llvm_sys_90 as llvm_sys;
+pub extern crate llvm_sys_90 as llvm_sys;
 
+use llvm_sys::target_machine::LLVMCodeGenOptLevel;
 use llvm_sys::{
     LLVMAtomicOrdering, LLVMAtomicRMWBinOp, LLVMDLLStorageClass, LLVMIntPredicate, LLVMRealPredicate,
     LLVMThreadLocalMode, LLVMVisibility,
 };
 
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use llvm_sys::LLVMInlineAsmDialect;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
 // Thanks to kennytm for coming up with assert_unique_features!
@@ -107,7 +115,23 @@ macro_rules! assert_unique_used_features {
     }
 }
 
-assert_unique_used_features! {"llvm4-0", "llvm5-0", "llvm6-0", "llvm7-0", "llvm8-0", "llvm9-0", "llvm10-0", "llvm11-0", "llvm12-0", "llvm13-0", "llvm14-0", "llvm15-0", "llvm16-0"}
+assert_unique_used_features! {
+    "llvm4-0",
+    "llvm5-0",
+    "llvm6-0",
+    "llvm7-0",
+    "llvm8-0",
+    "llvm9-0",
+    "llvm10-0",
+    "llvm11-0",
+    "llvm12-0",
+    "llvm13-0",
+    "llvm14-0",
+    "llvm15-0",
+    "llvm16-0",
+    "llvm17-0",
+    "llvm18-0"
+}
 
 /// Defines the address space in which a global will be inserted.
 ///
@@ -124,14 +148,8 @@ assert_unique_used_features! {"llvm4-0", "llvm5-0", "llvm6-0", "llvm7-0", "llvm8
 ///
 /// # Remarks
 /// See also: https://llvm.org/doxygen/NVPTXBaseInfo_8h_source.html
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone, Default)]
 pub struct AddressSpace(u32);
-
-impl Default for AddressSpace {
-    fn default() -> Self {
-        AddressSpace(0)
-    }
-}
 
 impl From<u16> for AddressSpace {
     fn from(val: u16) -> Self {
@@ -338,24 +356,24 @@ pub enum AtomicRMWBinOp {
     /// Adds to the float-typed value in memory and returns the prior value.
     // Although this was added in LLVM 9, it wasn't exposed to the C API
     // until 10.0.
-    #[llvm_versions(10.0..=latest)]
+    #[llvm_versions(10..)]
     #[llvm_variant(LLVMAtomicRMWBinOpFAdd)]
     FAdd,
 
     /// Subtract a float-typed value off the value in memory and returns the prior value.
     // Although this was added in LLVM 9, it wasn't exposed to the C API
     // until 10.0.
-    #[llvm_versions(10.0..=latest)]
+    #[llvm_versions(10..)]
     #[llvm_variant(LLVMAtomicRMWBinOpFSub)]
     FSub,
 
     /// Sets memory to the greater of the two float-typed values, one provided and one from memory. Returns the value that was in memory.
-    #[llvm_versions(15.0..=latest)]
+    #[llvm_versions(15..)]
     #[llvm_variant(LLVMAtomicRMWBinOpFMax)]
     FMax,
 
     /// Sets memory to the lesser of the two float-typed values, one provided and one from memory. Returns the value that was in memory.
-    #[llvm_versions(15.0..=latest)]
+    #[llvm_versions(15..)]
     #[llvm_variant(LLVMAtomicRMWBinOpFMin)]
     FMin,
 }
@@ -366,6 +384,7 @@ pub enum AtomicRMWBinOp {
 /// See also: https://llvm.org/doxygen/CodeGen_8h_source.html
 #[repr(u32)]
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum OptimizationLevel {
     None = 0,
     Less = 1,
@@ -380,8 +399,20 @@ impl Default for OptimizationLevel {
     }
 }
 
+impl From<OptimizationLevel> for LLVMCodeGenOptLevel {
+    fn from(value: OptimizationLevel) -> Self {
+        match value {
+            OptimizationLevel::None => LLVMCodeGenOptLevel::LLVMCodeGenLevelNone,
+            OptimizationLevel::Less => LLVMCodeGenOptLevel::LLVMCodeGenLevelLess,
+            OptimizationLevel::Default => LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
+            OptimizationLevel::Aggressive => LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
+        }
+    }
+}
+
 #[llvm_enum(LLVMVisibility)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum GlobalVisibility {
     #[llvm_variant(LLVMDefaultVisibility)]
     Default,
@@ -399,6 +430,7 @@ impl Default for GlobalVisibility {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ThreadLocalMode {
     GeneralDynamicTLSModel,
     LocalDynamicTLSModel,
@@ -430,6 +462,7 @@ impl ThreadLocalMode {
 
 #[llvm_enum(LLVMDLLStorageClass)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DLLStorageClass {
     #[llvm_variant(LLVMDefaultStorageClass)]
     Default,
@@ -446,9 +479,10 @@ impl Default for DLLStorageClass {
     }
 }
 
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 #[llvm_enum(LLVMInlineAsmDialect)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum InlineAsmDialect {
     #[llvm_variant(LLVMInlineAsmDialectATT)]
     ATT,

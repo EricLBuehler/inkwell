@@ -11,6 +11,28 @@ use std::fs::{remove_file, File};
 use std::io::Read;
 use std::str::from_utf8;
 
+fn write_target_machine_to_memory_buffer(target_machine: TargetMachine) {
+    let context = Context::create();
+    let module = context.create_module("my_module");
+    let void_type = context.void_type();
+    let fn_type = void_type.fn_type(&[], false);
+
+    module.add_function("my_fn", fn_type, None);
+
+    let buffer = target_machine
+        .write_to_memory_buffer(&module, FileType::Assembly)
+        .unwrap();
+
+    assert!(!buffer.get_size() > 0);
+
+    let string = from_utf8(buffer.as_slice()).unwrap();
+
+    assert!(string.contains(".text"));
+    assert!(string.contains(".file"));
+    assert!(string.contains("my_module"));
+    assert!(string.contains(".section"));
+}
+
 // REVIEW: Inconsistently failing on different tries :(
 // #[test]
 // fn test_target() {
@@ -161,16 +183,29 @@ fn test_default_triple() {
     let default_triple = TargetMachine::get_default_triple();
     let default_triple = default_triple.as_str().to_string_lossy();
 
-    // FIXME: arm arch
-    #[cfg(target_os = "linux")]
-    let cond = default_triple == "x86_64-pc-linux-gnu"
-        || default_triple == "x86_64-unknown-linux-gnu"
-        || default_triple == "x86_64-redhat-linux-gnu";
+    let archs = ["x86_64", "arm64"];
+    let has_known_arch = archs.iter().any(|arch| default_triple.starts_with(*arch));
+    assert!(has_known_arch, "Target triple '{default_triple}' has unknown arch");
 
-    #[cfg(target_os = "macos")]
-    let cond = default_triple.starts_with("x86_64-apple-darwin");
+    let vendors = if cfg!(target_os = "linux") {
+        vec!["pc", "unknown", "redhat"]
+    } else if cfg!(target_os = "macos") {
+        vec!["apple"]
+    } else {
+        vec![]
+    };
 
-    assert!(cond, "Unexpected target triple: {}", default_triple);
+    let has_known_vendor = vendors.iter().any(|vendor| default_triple.contains(*vendor));
+    assert!(has_known_vendor, "Target triple '{default_triple}' has unknown vendor");
+
+    let os = [
+        #[cfg(target_os = "linux")]
+        "linux",
+        #[cfg(target_os = "macos")]
+        "darwin",
+    ];
+    let has_known_os = os.iter().any(|os| default_triple.contains(*os));
+    assert!(has_known_os, "Target triple '{default_triple}' has unknown OS");
 
     // TODO: CFG for other supported major OSes
 }
@@ -275,7 +310,7 @@ fn test_target_data() {
     assert_eq!(target_data.element_at_offset(&struct_type, 16), 2);
     assert_eq!(target_data.element_at_offset(&struct_type, 24), 3);
     assert_eq!(target_data.element_at_offset(&struct_type, 32), 3); // OoB
-    assert_eq!(target_data.element_at_offset(&struct_type, ::std::u64::MAX), 3); // OoB; Odd as it seems to cap at max element number
+    assert_eq!(target_data.element_at_offset(&struct_type, u64::MAX), 3); // OoB; Odd as it seems to cap at max element number
 
     assert_eq!(target_data.offset_of_element(&struct_type2, 0), Some(0));
     assert_eq!(target_data.offset_of_element(&struct_type2, 1), Some(4));
@@ -290,7 +325,7 @@ fn test_target_data() {
     assert_eq!(target_data.element_at_offset(&struct_type2, 8), 2);
     assert_eq!(target_data.element_at_offset(&struct_type2, 16), 3);
     assert_eq!(target_data.element_at_offset(&struct_type2, 32), 3); // OoB
-    assert_eq!(target_data.element_at_offset(&struct_type2, ::std::u64::MAX), 3); // OoB; TODOC: Odd but seems to cap at max element number
+    assert_eq!(target_data.element_at_offset(&struct_type2, u64::MAX), 3); // OoB; TODOC: Odd but seems to cap at max element number
 
     TargetData::create("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
 }
@@ -390,23 +425,45 @@ fn test_write_target_machine_to_memory_buffer() {
         )
         .unwrap();
 
-    let context = Context::create();
-    let module = context.create_module("my_module");
-    let void_type = context.void_type();
-    let fn_type = void_type.fn_type(&[], false);
+    write_target_machine_to_memory_buffer(target_machine);
+}
 
-    module.add_function("my_fn", fn_type, None);
+#[llvm_versions(18..)]
+#[test]
+fn test_create_target_machine_from_default_options() {
+    Target::initialize_x86(&InitializationConfig::default());
 
-    let buffer = target_machine
-        .write_to_memory_buffer(&module, FileType::Assembly)
-        .unwrap();
+    let triple = TargetTriple::create("x86_64-pc-linux-gnu");
+    let target = Target::from_triple(&triple).unwrap();
+    let options = Default::default();
 
-    assert!(!buffer.get_size() > 0);
+    let target_machine = target.create_target_machine_from_options(&triple, options).unwrap();
 
-    let string = from_utf8(buffer.as_slice()).unwrap();
+    assert_eq!(target_machine.get_cpu().to_str(), Ok(""));
+    assert_eq!(target_machine.get_feature_string().to_str(), Ok(""));
 
-    assert!(string.contains(".text"));
-    assert!(string.contains(".file"));
-    assert!(string.contains("my_module"));
-    assert!(string.contains(".section"));
+    write_target_machine_to_memory_buffer(target_machine);
+}
+
+#[llvm_versions(18..)]
+#[test]
+fn test_create_target_machine_from_options() {
+    Target::initialize_x86(&InitializationConfig::default());
+
+    let triple = TargetTriple::create("x86_64-pc-linux-gnu");
+    let target = Target::from_triple(&triple).unwrap();
+    let options = inkwell::targets::TargetMachineOptions::new()
+        .set_cpu("x86-64")
+        .set_features("+avx2")
+        .set_abi("sysv")
+        .set_level(OptimizationLevel::Aggressive)
+        .set_reloc_mode(RelocMode::PIC)
+        .set_code_model(CodeModel::JITDefault);
+
+    let target_machine = target.create_target_machine_from_options(&triple, options).unwrap();
+
+    assert_eq!(target_machine.get_cpu().to_str(), Ok("x86-64"));
+    assert_eq!(target_machine.get_feature_string().to_str(), Ok("+avx2"));
+
+    write_target_machine_to_memory_buffer(target_machine);
 }

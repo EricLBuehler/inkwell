@@ -16,15 +16,32 @@ mod int_value;
 mod metadata_value;
 mod phi_value;
 mod ptr_value;
+mod scalable_vec_value;
 mod struct_value;
 mod traits;
 mod vec_value;
 
-#[cfg(not(any(feature = "llvm15-0", feature = "llvm16-0")))]
+#[cfg(feature = "llvm18-0")]
+pub(crate) mod operand_bundle;
+
+#[cfg(not(any(
+    feature = "llvm15-0",
+    feature = "llvm16-0",
+    feature = "llvm17-0",
+    feature = "llvm18-0"
+)))]
 mod callable_value;
 
-#[cfg(not(any(feature = "llvm15-0", feature = "llvm16-0")))]
+#[cfg(not(any(
+    feature = "llvm15-0",
+    feature = "llvm16-0",
+    feature = "llvm17-0",
+    feature = "llvm18-0"
+)))]
 pub use crate::values::callable_value::CallableValue;
+
+#[llvm_versions(18..)]
+pub use crate::values::operand_bundle::OperandBundle;
 
 use crate::support::{to_c_str, LLVMString};
 pub use crate::values::array_value::ArrayValue;
@@ -35,20 +52,25 @@ pub use crate::values::float_value::FloatValue;
 pub use crate::values::fn_value::FunctionValue;
 pub use crate::values::generic_value::GenericValue;
 pub use crate::values::global_value::GlobalValue;
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 pub use crate::values::global_value::UnnamedAddress;
-pub use crate::values::instruction_value::{InstructionOpcode, InstructionValue};
+pub use crate::values::instruction_value::{InstructionOpcode, InstructionValue, OperandIter, OperandUseIter};
 pub use crate::values::int_value::IntValue;
 pub use crate::values::metadata_value::{MetadataValue, FIRST_CUSTOM_METADATA_KIND_ID};
+pub use crate::values::phi_value::IncomingIter;
 pub use crate::values::phi_value::PhiValue;
 pub use crate::values::ptr_value::PointerValue;
+pub use crate::values::scalable_vec_value::ScalableVectorValue;
+pub use crate::values::struct_value::FieldValueIter;
 pub use crate::values::struct_value::StructValue;
 pub use crate::values::traits::AsValueRef;
-pub use crate::values::traits::{AggregateValue, AnyValue, BasicValue, FloatMathValue, IntMathValue, PointerMathValue};
+pub use crate::values::traits::{
+    AggregateValue, AnyValue, BasicValue, FloatMathValue, IntMathValue, PointerMathValue, VectorBaseValue,
+};
 pub use crate::values::vec_value::VectorValue;
 
-#[llvm_versions(12.0..=latest)]
-use llvm_sys::core::LLVMIsPoison;
+#[llvm_versions(18..)]
+pub use llvm_sys::LLVMTailCallKind;
 
 use llvm_sys::core::{
     LLVMDumpValue, LLVMGetFirstUse, LLVMGetSection, LLVMIsAInstruction, LLVMIsConstant, LLVMIsNull, LLVMIsUndef,
@@ -120,7 +142,7 @@ impl<'ctx> Value<'ctx> {
         {
             use llvm_sys::core::LLVMSetValueName2;
 
-            unsafe { LLVMSetValueName2(self.value, c_string.as_ptr(), name.len()) }
+            unsafe { LLVMSetValueName2(self.value, c_string.as_ptr(), c_string.to_bytes().len()) }
         }
     }
 
@@ -205,15 +227,17 @@ impl<'ctx> Value<'ctx> {
     /// Sets the section of the global value
     fn set_section(self, section: Option<&str>) {
         #[cfg(target_os = "macos")]
-        let section = section.map(|s| {
+        let mapped_section = section.map(|s| {
             if s.contains(",") {
                 format!("{}", s)
             } else {
                 format!(",{}", s)
             }
         });
+        #[cfg(target_os = "macos")]
+        let section = mapped_section.as_deref();
 
-        let c_string = section.as_deref().map(to_c_str);
+        let c_string = section.map(to_c_str);
 
         unsafe {
             LLVMSetSection(

@@ -5,13 +5,17 @@ use llvm_sys::core::{
     LLVMGetInstructionCallConv, LLVMGetTypeKind, LLVMIsTailCall, LLVMSetInstrParamAlignment,
     LLVMSetInstructionCallConv, LLVMSetTailCall, LLVMTypeOf,
 };
+#[llvm_versions(18..)]
+use llvm_sys::core::{LLVMGetTailCallKind, LLVMSetTailCallKind};
 use llvm_sys::prelude::LLVMValueRef;
 use llvm_sys::LLVMTypeKind;
 
 use crate::attributes::{Attribute, AttributeLoc};
+#[llvm_versions(18..)]
+use crate::values::operand_bundle::OperandBundleIter;
 use crate::values::{AsValueRef, BasicValueEnum, FunctionValue, InstructionValue, Value};
 
-use super::AnyValue;
+use super::{AnyValue, InstructionOpcode};
 
 /// A value resulting from a function call. It may have function attributes applied to it.
 ///
@@ -20,7 +24,12 @@ use super::AnyValue;
 pub struct CallSiteValue<'ctx>(Value<'ctx>);
 
 impl<'ctx> CallSiteValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Self {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type call site.
+    pub unsafe fn new(value: LLVMValueRef) -> Self {
         CallSiteValue(Value::new(value))
     }
 
@@ -74,6 +83,59 @@ impl<'ctx> CallSiteValue<'ctx> {
     /// ```
     pub fn is_tail_call(self) -> bool {
         unsafe { LLVMIsTailCall(self.as_value_ref()) == 1 }
+    }
+
+    /// Returns tail, musttail, and notail attributes.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::values::LLVMTailCallKind::*;
+    ///
+    /// let context = inkwell::context::Context::create();
+    /// let builder = context.create_builder();
+    /// let module = context.create_module("my_mod");
+    /// let void_type = context.void_type();
+    /// let fn_type = void_type.fn_type(&[], false);
+    /// let fn_value = module.add_function("my_fn", fn_type, None);
+    /// let entry_bb = context.append_basic_block(fn_value, "entry");
+    ///
+    /// builder.position_at_end(entry_bb);
+    ///
+    /// let call_site = builder.build_call(fn_value, &[], "my_fn").unwrap();
+    ///
+    /// assert_eq!(call_site.get_tail_call_kind(), LLVMTailCallKindNone);
+    /// ```
+    #[llvm_versions(18..)]
+    pub fn get_tail_call_kind(self) -> super::LLVMTailCallKind {
+        unsafe { LLVMGetTailCallKind(self.as_value_ref()) }
+    }
+
+    /// Sets tail, musttail, and notail attributes.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::values::LLVMTailCallKind::*;
+    ///
+    /// let context = inkwell::context::Context::create();
+    /// let builder = context.create_builder();
+    /// let module = context.create_module("my_mod");
+    /// let void_type = context.void_type();
+    /// let fn_type = void_type.fn_type(&[], false);
+    /// let fn_value = module.add_function("my_fn", fn_type, None);
+    /// let entry_bb = context.append_basic_block(fn_value, "entry");
+    ///
+    /// builder.position_at_end(entry_bb);
+    ///
+    /// let call_site = builder.build_call(fn_value, &[], "my_fn").unwrap();
+    ///
+    /// call_site.set_tail_call_kind(LLVMTailCallKindTail);
+    /// assert_eq!(call_site.get_tail_call_kind(), LLVMTailCallKindTail);
+    /// ```
+    #[llvm_versions(18..)]
+    pub fn set_tail_call_kind(self, kind: super::LLVMTailCallKind) {
+        unsafe { LLVMSetTailCallKind(self.as_value_ref(), kind) };
     }
 
     /// Try to convert this `CallSiteValue` to a `BasicValueEnum` if not a void return type.
@@ -532,6 +594,47 @@ impl<'ctx> CallSiteValue<'ctx> {
 
         unsafe { LLVMSetInstrParamAlignment(self.as_value_ref(), loc.get_index(), alignment) }
     }
+
+    /// Iterate over operand bundles.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use inkwell::context::Context;
+    /// use inkwell::values::OperandBundle;
+    ///
+    /// let context = Context::create();
+    /// let module = context.create_module("op_bundles");
+    /// let builder = context.create_builder();
+    ///
+    /// let void_type = context.void_type();
+    /// let i32_type = context.i32_type();
+    /// let fn_type = void_type.fn_type(&[], false);
+    /// let fn_value = module.add_function("func", fn_type, None);
+    ///
+    /// let basic_block = context.append_basic_block(fn_value, "entry");
+    /// builder.position_at_end(basic_block);
+    ///
+    /// // Recursive call
+    /// let callinst = builder.build_direct_call_with_operand_bundles(
+    ///   fn_value,
+    ///   &[],
+    ///   &[OperandBundle::create("tag0", &[i32_type.const_zero().into()]), OperandBundle::create("tag1", &[])],
+    ///   "call"
+    /// ).unwrap();
+    ///
+    /// builder.build_return(None).unwrap();
+    /// # module.verify().unwrap();
+    ///
+    /// let mut op_bundles_iter = callinst.get_operand_bundles();
+    /// assert_eq!(op_bundles_iter.len(), 2);
+    /// let tags: Vec<String> = op_bundles_iter.map(|ob| ob.get_tag().unwrap().into()).collect();
+    /// assert_eq!(tags, vec!["tag0", "tag1"]);
+    /// ```
+    #[llvm_versions(18..)]
+    pub fn get_operand_bundles(&self) -> OperandBundleIter<'_, 'ctx> {
+        OperandBundleIter::new(self)
+    }
 }
 
 unsafe impl AsValueRef for CallSiteValue<'_> {
@@ -543,5 +646,17 @@ unsafe impl AsValueRef for CallSiteValue<'_> {
 impl Display for CallSiteValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.print_to_string())
+    }
+}
+
+impl<'ctx> TryFrom<InstructionValue<'ctx>> for CallSiteValue<'ctx> {
+    type Error = ();
+
+    fn try_from(value: InstructionValue<'ctx>) -> Result<Self, Self::Error> {
+        if value.get_opcode() == InstructionOpcode::Call {
+            unsafe { Ok(CallSiteValue::new(value.as_value_ref())) }
+        } else {
+            Err(())
+        }
     }
 }
