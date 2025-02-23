@@ -1,10 +1,15 @@
+#[llvm_versions(..=16)]
+use llvm_sys::core::LLVMConstSelect;
+#[llvm_versions(..=17)]
 use llvm_sys::core::{
-    LLVMConstAShr, LLVMConstAdd, LLVMConstAnd, LLVMConstBitCast, LLVMConstICmp, LLVMConstIntCast,
-    LLVMConstIntGetSExtValue, LLVMConstIntGetZExtValue, LLVMConstIntToPtr, LLVMConstLShr, LLVMConstMul,
-    LLVMConstNSWAdd, LLVMConstNSWMul, LLVMConstNSWNeg, LLVMConstNSWSub, LLVMConstNUWAdd, LLVMConstNUWMul,
-    LLVMConstNUWNeg, LLVMConstNUWSub, LLVMConstNeg, LLVMConstNot, LLVMConstOr, LLVMConstSExt, LLVMConstSExtOrBitCast,
-    LLVMConstSIToFP, LLVMConstSelect, LLVMConstShl, LLVMConstSub, LLVMConstTrunc, LLVMConstTruncOrBitCast,
-    LLVMConstUIToFP, LLVMConstXor, LLVMConstZExt, LLVMConstZExtOrBitCast, LLVMIsAConstantInt,
+    LLVMConstAShr, LLVMConstAnd, LLVMConstIntCast, LLVMConstLShr, LLVMConstOr, LLVMConstSExt, LLVMConstSExtOrBitCast,
+    LLVMConstSIToFP, LLVMConstUIToFP, LLVMConstZExt, LLVMConstZExtOrBitCast,
+};
+use llvm_sys::core::{
+    LLVMConstAdd, LLVMConstBitCast, LLVMConstICmp, LLVMConstIntGetSExtValue, LLVMConstIntGetZExtValue,
+    LLVMConstIntToPtr, LLVMConstMul, LLVMConstNSWAdd, LLVMConstNSWMul, LLVMConstNSWNeg, LLVMConstNSWSub,
+    LLVMConstNUWAdd, LLVMConstNUWMul, LLVMConstNUWNeg, LLVMConstNUWSub, LLVMConstNeg, LLVMConstNot, LLVMConstShl,
+    LLVMConstSub, LLVMConstTrunc, LLVMConstTruncOrBitCast, LLVMConstXor, LLVMIsAConstantInt,
 };
 use llvm_sys::prelude::LLVMValueRef;
 
@@ -12,9 +17,15 @@ use std::convert::TryFrom;
 use std::ffi::CStr;
 use std::fmt::{self, Display};
 
-use crate::types::{AsTypeRef, FloatType, IntType, PointerType};
+#[llvm_versions(..=17)]
+use crate::types::FloatType;
+use crate::types::{AsTypeRef, IntType, PointerType};
 use crate::values::traits::AsValueRef;
-use crate::values::{BasicValue, BasicValueEnum, FloatValue, InstructionValue, PointerValue, Value};
+#[llvm_versions(..=17)]
+use crate::values::FloatValue;
+#[llvm_versions(..=16)]
+use crate::values::{BasicValue, BasicValueEnum};
+use crate::values::{InstructionValue, PointerValue, Value};
 use crate::IntPredicate;
 
 use super::AnyValue;
@@ -25,7 +36,12 @@ pub struct IntValue<'ctx> {
 }
 
 impl<'ctx> IntValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Self {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type int.
+    pub unsafe fn new(value: LLVMValueRef) -> Self {
         assert!(!value.is_null());
 
         IntValue {
@@ -117,52 +133,54 @@ impl<'ctx> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstNUWMul(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_unsigned_div(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstUDiv;
 
         unsafe { IntValue::new(LLVMConstUDiv(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_signed_div(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstSDiv;
 
         unsafe { IntValue::new(LLVMConstSDiv(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_exact_signed_div(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstExactSDiv;
 
         unsafe { IntValue::new(LLVMConstExactSDiv(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_exact_unsigned_div(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstExactUDiv;
 
         unsafe { IntValue::new(LLVMConstExactUDiv(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_unsigned_remainder(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstURem;
 
         unsafe { IntValue::new(LLVMConstURem(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     pub fn const_signed_remainder(self, rhs: IntValue<'ctx>) -> Self {
         use llvm_sys::core::LLVMConstSRem;
 
         unsafe { IntValue::new(LLVMConstSRem(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_and(self, rhs: IntValue<'ctx>) -> Self {
         unsafe { IntValue::new(LLVMConstAnd(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_or(self, rhs: IntValue<'ctx>) -> Self {
         unsafe { IntValue::new(LLVMConstOr(self.as_value_ref(), rhs.as_value_ref())) }
     }
@@ -172,6 +190,7 @@ impl<'ctx> IntValue<'ctx> {
     }
 
     // TODO: Could infer is_signed from type (one day)?
+    #[llvm_versions(..=17)]
     pub fn const_cast(self, int_type: IntType<'ctx>, is_signed: bool) -> Self {
         unsafe {
             IntValue::new(LLVMConstIntCast(
@@ -187,20 +206,24 @@ impl<'ctx> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstShl(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_rshr(self, rhs: IntValue<'ctx>) -> Self {
         unsafe { IntValue::new(LLVMConstLShr(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
+    #[llvm_versions(..=17)]
     pub fn const_ashr(self, rhs: IntValue<'ctx>) -> Self {
         unsafe { IntValue::new(LLVMConstAShr(self.as_value_ref(), rhs.as_value_ref())) }
     }
 
     // SubType: const_to_float impl only for unsigned types
+    #[llvm_versions(..=17)]
     pub fn const_unsigned_to_float(self, float_type: FloatType<'ctx>) -> FloatValue<'ctx> {
         unsafe { FloatValue::new(LLVMConstUIToFP(self.as_value_ref(), float_type.as_type_ref())) }
     }
 
     // SubType: const_to_float impl only for signed types
+    #[llvm_versions(..=17)]
     pub fn const_signed_to_float(self, float_type: FloatType<'ctx>) -> FloatValue<'ctx> {
         unsafe { FloatValue::new(LLVMConstSIToFP(self.as_value_ref(), float_type.as_type_ref())) }
     }
@@ -214,11 +237,13 @@ impl<'ctx> IntValue<'ctx> {
     }
 
     // TODO: More descriptive name
+    #[llvm_versions(..=17)]
     pub fn const_s_extend(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstSExt(self.as_value_ref(), int_type.as_type_ref())) }
     }
 
     // TODO: More descriptive name
+    #[llvm_versions(..=17)]
     pub fn const_z_ext(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstZExt(self.as_value_ref(), int_type.as_type_ref())) }
     }
@@ -228,11 +253,13 @@ impl<'ctx> IntValue<'ctx> {
     }
 
     // TODO: More descriptive name
+    #[llvm_versions(..=17)]
     pub fn const_s_extend_or_bit_cast(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstSExtOrBitCast(self.as_value_ref(), int_type.as_type_ref())) }
     }
 
     // TODO: More descriptive name
+    #[llvm_versions(..=17)]
     pub fn const_z_ext_or_bit_cast(self, int_type: IntType<'ctx>) -> IntValue<'ctx> {
         unsafe { IntValue::new(LLVMConstZExtOrBitCast(self.as_value_ref(), int_type.as_type_ref())) }
     }
@@ -247,6 +274,7 @@ impl<'ctx> IntValue<'ctx> {
     }
 
     // SubTypes: self can only be IntValue<bool>
+    #[llvm_versions(..=16)]
     pub fn const_select<BV: BasicValue<'ctx>>(self, then: BV, else_: BV) -> BasicValueEnum<'ctx> {
         unsafe {
             BasicValueEnum::new(LLVMConstSelect(

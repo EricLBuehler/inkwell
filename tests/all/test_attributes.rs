@@ -40,7 +40,7 @@ fn test_string_attributes() {
     assert_eq!(string_attribute.get_string_value().to_str(), Ok("my_val"));
 }
 
-#[llvm_versions(12.0..=latest)]
+#[llvm_versions(12..)]
 #[test]
 fn test_type_attribute() {
     use inkwell::types::{AnyType, BasicType};
@@ -49,6 +49,8 @@ fn test_type_attribute() {
     let context = Context::create();
     let kind_id = Attribute::get_named_enum_kind_id("sret");
 
+    #[allow(deprecated)]
+    let ptr_type = context.i32_type().ptr_type(AddressSpace::default());
     let any_types = [
         context.i32_type().as_any_type_enum(),
         context.f32_type().as_any_type_enum(),
@@ -56,7 +58,7 @@ fn test_type_attribute() {
         context.i32_type().vec_type(1).as_any_type_enum(),
         context.i32_type().array_type(1).as_any_type_enum(),
         context.i32_type().fn_type(&[], false).as_any_type_enum(),
-        context.i32_type().ptr_type(AddressSpace::from(5u16)).as_any_type_enum(),
+        ptr_type.as_any_type_enum(),
         context
             .struct_type(&[context.i32_type().as_basic_type_enum()], false)
             .as_any_type_enum(),
@@ -76,6 +78,7 @@ fn test_type_attribute() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_attributes_on_function_values() {
     let context = Context::create();
     let builder = context.create_builder();
@@ -224,7 +227,7 @@ fn test_attributes_on_call_site_values() {
     assert!(call_site_value
         .get_string_attribute(AttributeLoc::Return, "my_key")
         .is_none());
-    assert_eq!(call_site_value.get_called_fn_value(), fn_value);
+    assert_eq!(call_site_value.get_called_fn_value(), Some(fn_value));
 
     call_site_value.set_alignment_attribute(AttributeLoc::Return, 16);
 
