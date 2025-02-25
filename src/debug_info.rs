@@ -108,7 +108,7 @@ use crate::values::{AsValueRef, BasicValueEnum, InstructionValue, MetadataValue,
 use crate::AddressSpace;
 
 use llvm_sys::core::LLVMMetadataAsValue;
-#[llvm_versions(8.0..=latest)]
+#[llvm_versions(8..)]
 use llvm_sys::debuginfo::LLVMDIBuilderCreateTypedef;
 pub use llvm_sys::debuginfo::LLVMDWARFTypeEncoding;
 use llvm_sys::debuginfo::LLVMDebugMetadataVersion;
@@ -127,7 +127,7 @@ use llvm_sys::debuginfo::{
     LLVMDIBuilderInsertDeclareBefore, LLVMDILocationGetColumn, LLVMDILocationGetLine, LLVMDILocationGetScope,
     LLVMDITypeGetAlignInBits, LLVMDITypeGetOffsetInBits, LLVMDITypeGetSizeInBits,
 };
-#[llvm_versions(8.0..=latest)]
+#[llvm_versions(8..)]
 use llvm_sys::debuginfo::{LLVMDIBuilderCreateConstantValueExpression, LLVMDIBuilderCreateGlobalVariableExpression};
 use llvm_sys::prelude::{LLVMDIBuilderRef, LLVMMetadataRef};
 use std::convert::TryInto;
@@ -167,6 +167,7 @@ impl<'ctx> DIScope<'ctx> {
 /// Specific scopes (i.e. `DILexicalBlock`) can be turned into a `DIScope` with the
 /// `AsDIScope::as_debug_info_scope` trait method.
 pub trait AsDIScope<'ctx> {
+    #[allow(clippy::wrong_self_convention)]
     fn as_debug_info_scope(self) -> DIScope<'ctx>;
 }
 
@@ -192,7 +193,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sysroot: &str,
         #[cfg(any(
@@ -201,7 +204,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sdk: &str,
     ) -> (Self, DICompileUnit<'ctx>) {
@@ -238,7 +243,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
                 feature = "llvm13-0",
                 feature = "llvm14-0",
                 feature = "llvm15-0",
-                feature = "llvm16-0"
+                feature = "llvm16-0",
+                feature = "llvm17-0",
+                feature = "llvm18-0"
             ))]
             sysroot,
             #[cfg(any(
@@ -247,7 +254,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
                 feature = "llvm13-0",
                 feature = "llvm14-0",
                 feature = "llvm15-0",
-                feature = "llvm16-0"
+                feature = "llvm16-0",
+                feature = "llvm17-0",
+                feature = "llvm18-0"
             ))]
             sdk,
         );
@@ -292,7 +301,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sysroot: &str,
         #[cfg(any(
@@ -301,7 +312,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sdk: &str,
     ) -> DICompileUnit<'ctx> {
@@ -341,7 +354,9 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
                 feature = "llvm13-0",
                 feature = "llvm14-0",
                 feature = "llvm15-0",
-                feature = "llvm16-0"
+                feature = "llvm16-0",
+                feature = "llvm17-0",
+                feature = "llvm18-0"
             ))]
             {
                 LLVMDIBuilderCreateCompileUnit(
@@ -385,8 +400,8 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
     /// * `ty` - Function type.
     /// * `is_local_to_unit` - True if this function is not externally visible.
     /// * `is_definition` - True if this is a function definition ("When isDefinition: false,
-    /// subprograms describe a declaration in the type tree as opposed to a definition of a
-    /// function").
+    ///   subprograms describe a declaration in the type tree as opposed to a definition of a
+    ///   function").
     /// * `scope_line` - Set to the beginning of the scope this starts
     /// * `flags` - E.g.: LLVMDIFlagLValueReference. These flags are used to emit dwarf attributes.
     /// * `is_optimized` - True if optimization is ON.
@@ -496,7 +511,7 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
 
     /// Create a primitive basic type. `encoding` is an unsigned int flag (`DW_ATE_*`
     /// enum) defined by the chosen DWARF standard.
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn create_basic_type(
         &self,
         name: &str,
@@ -527,7 +542,7 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
     }
 
     /// Create a typedef (alias) of `ditype`
-    #[llvm_versions(8.0..=latest)]
+    #[llvm_versions(8..)]
     pub fn create_typedef(
         &self,
         ditype: DIType<'ctx>,
@@ -776,7 +791,7 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
         }
     }
 
-    #[llvm_versions(8.0..=latest)]
+    #[llvm_versions(8..)]
     pub fn create_global_variable_expression(
         &self,
         scope: DIScope<'ctx>,
@@ -815,7 +830,7 @@ impl<'ctx> DebugInfoBuilder<'ctx> {
         }
     }
 
-    #[llvm_versions(8.0..=latest)]
+    #[llvm_versions(8..)]
     pub fn create_constant_expression(&self, value: i64) -> DIExpression<'ctx> {
         let metadata_ref = unsafe { LLVMDIBuilderCreateConstantValueExpression(self.builder, value as _) };
 
@@ -1348,7 +1363,11 @@ impl<'ctx> DIGlobalVariableExpression<'ctx> {
     }
 }
 
-/// https://llvm.org/docs/LangRef.html#diexpression
+/// Specialized metadata node that contains a DWARF-like expression.
+///
+/// # Remarks
+///
+/// See also the [LLVM language reference](https://llvm.org/docs/LangRef.html#diexpression).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct DIExpression<'ctx> {
     pub(crate) metadata_ref: LLVMMetadataRef,
@@ -1374,7 +1393,7 @@ mod flags {
         const PUBLIC: Self;
         const FWD_DECL: Self;
         const APPLE_BLOCK: Self;
-        //#[llvm_versions(7.0..=9.0)]
+        //#[llvm_versions(7..=9)]
         //const BLOCK_BYREF_STRUCT: Self;
         const VIRTUAL: Self;
         const ARTIFICIAL: Self;
@@ -1393,24 +1412,24 @@ mod flags {
         const INTRODUCED_VIRTUAL: Self;
         const BIT_FIELD: Self;
         const NO_RETURN: Self;
-        //#[llvm_versions(7.0..=8.0)]
+        //#[llvm_versions(7..=8)]
         //const MAIN_SUBPROGRAM: Self;
         const TYPE_PASS_BY_VALUE: Self;
         const TYPE_PASS_BY_REFERENCE: Self;
-        //#[llvm_versions(7.0)]
+        //#[llvm_versions(7)]
         //const FIXED_ENUM: Self;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const ENUM_CLASS: Self;
         const THUNK: Self;
-        //#[llvm_versions(7.0..=8.0)]
+        //#[llvm_versions(7..=8)]
         //const TRIVIAL: Self;
-        //#[llvm_versions(9.0..=latest)]
+        //#[llvm_versions(9..)]
         //const NON_TRIVIAL: Self;
-        //#[llvm_versions(10.0)]
+        //#[llvm_versions(10)]
         //const RESERVED_BIT4: Self;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const BIGE_NDIAN: Self;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const LITTLE_ENDIAN: Self;
         const INDIRECT_VIRTUAL_BASE: Self;
     }
@@ -1421,7 +1440,7 @@ mod flags {
         const PUBLIC: DIFlags = llvm_sys::debuginfo::LLVMDIFlagPublic;
         const FWD_DECL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagFwdDecl;
         const APPLE_BLOCK: DIFlags = llvm_sys::debuginfo::LLVMDIFlagAppleBlock;
-        //#[llvm_versions(7.0..=9.0)]
+        //#[llvm_versions(7..=9)]
         //const BLOCK_BYREF_STRUCT: DIFlags = llvm_sys::debuginfo::LLVMDIFlagBlockByrefStruct;
         const VIRTUAL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagVirtual;
         const ARTIFICIAL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagArtificial;
@@ -1440,24 +1459,24 @@ mod flags {
         const INTRODUCED_VIRTUAL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagIntroducedVirtual;
         const BIT_FIELD: DIFlags = llvm_sys::debuginfo::LLVMDIFlagBitField;
         const NO_RETURN: DIFlags = llvm_sys::debuginfo::LLVMDIFlagNoReturn;
-        //#[llvm_versions(7.0..=8.0)]
+        //#[llvm_versions(7..=8)]
         //const MAIN_SUBPROGRAM: DIFlags = llvm_sys::debuginfo::LLVMDIFlagMainSubprogram;
         const TYPE_PASS_BY_VALUE: DIFlags = llvm_sys::debuginfo::LLVMDIFlagTypePassByValue;
         const TYPE_PASS_BY_REFERENCE: DIFlags = llvm_sys::debuginfo::LLVMDIFlagTypePassByReference;
-        //#[llvm_versions(7.0)]
+        //#[llvm_versions(7)]
         //const FIXED_ENUM: DIFlags = llvm_sys::debuginfo::LLVMDIFlagFixedEnum;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const ENUM_CLASS: DIFlags = llvm_sys::debuginfo::LLVMDIFlagEnumClass;
         const THUNK: DIFlags = llvm_sys::debuginfo::LLVMDIFlagThunk;
-        //#[llvm_versions(7.0..=8.0)]
+        //#[llvm_versions(7..=8)]
         //const TRIVIAL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagTrivial;
-        //#[llvm_versions(9.0..=latest)]
+        //#[llvm_versions(9..)]
         //const NON_TRIVIAL: DIFlags = llvm_sys::debuginfo::LLVMDIFlagNonTrivial;
-        //#[llvm_versions(10.0)]
+        //#[llvm_versions(10)]
         //const RESERVED_BIT4: DIFlags = llvm_sys::debuginfo::LLVMDIFlagReservedBit4;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const BIG_ENDIAN: DIFlags = llvm_sys::debuginfo::LLVMDIFlagBigEndian;
-        //#[llvm_versions(8.0..=latest)]
+        //#[llvm_versions(8..)]
         //const LITTLE_ENDIAN: DIFlags = llvm_sys::debuginfo::LLVMDIFlagLittleEndian;
         const INDIRECT_VIRTUAL_BASE: DIFlags = llvm_sys::debuginfo::LLVMDIFlagIndirectVirtualBase;
     }
@@ -1558,32 +1577,35 @@ mod flags {
         GOOGLERenderScript,
         #[llvm_variant(LLVMDWARFSourceLanguageBORLAND_Delphi)]
         BORLANDDelphi,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageKotlin)]
         Kotlin,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageZig)]
         Zig,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageCrystal)]
         Crystal,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageC_plus_plus_17)]
         CPlusPlus17,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageC_plus_plus_20)]
         CPlusPlus20,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageC17)]
         C17,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageFortran18)]
         Fortran18,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageAda2005)]
         Ada2005,
-        #[llvm_versions(16.0..=latest)]
+        #[llvm_versions(16..)]
         #[llvm_variant(LLVMDWARFSourceLanguageAda2012)]
         Ada2012,
+        #[llvm_versions(17..)]
+        #[llvm_variant(LLVMDWARFSourceLanguageMojo)]
+        Mojo,
     }
 }

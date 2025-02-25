@@ -10,7 +10,7 @@ use llvm_sys::core::{
     LLVMIsAFunction, LLVMIsConstant, LLVMSetFunctionCallConv, LLVMSetGC, LLVMSetLinkage, LLVMSetParamAlignment,
 };
 use llvm_sys::core::{LLVMGetPersonalityFn, LLVMSetPersonalityFn};
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use llvm_sys::debuginfo::{LLVMGetSubprogram, LLVMSetSubprogram};
 use llvm_sys::prelude::{LLVMBasicBlockRef, LLVMValueRef};
 
@@ -21,7 +21,7 @@ use std::mem::forget;
 
 use crate::attributes::{Attribute, AttributeLoc};
 use crate::basic_block::BasicBlock;
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use crate::debug_info::DISubprogram;
 use crate::module::Linkage;
 use crate::support::to_c_str;
@@ -35,12 +35,15 @@ pub struct FunctionValue<'ctx> {
 }
 
 impl<'ctx> FunctionValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Option<Self> {
-        if value.is_null() {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type function.
+    pub unsafe fn new(value: LLVMValueRef) -> Option<Self> {
+        if value.is_null() || LLVMIsAFunction(value).is_null() {
             return None;
         }
-
-        assert!(!LLVMIsAFunction(value).is_null());
 
         Some(FunctionValue {
             fn_value: Value::new(value),
@@ -131,6 +134,10 @@ impl<'ctx> FunctionValue<'ctx> {
         unsafe { LLVMCountBasicBlocks(self.as_value_ref()) }
     }
 
+    pub fn get_basic_block_iter(self) -> BasicBlockIter<'ctx> {
+        BasicBlockIter(self.get_first_basic_block())
+    }
+
     pub fn get_basic_blocks(self) -> Vec<BasicBlock<'ctx>> {
         let count = self.count_basic_blocks();
         let mut raw_vec: Vec<LLVMBasicBlockRef> = Vec::with_capacity(count as usize);
@@ -198,7 +205,7 @@ impl<'ctx> FunctionValue<'ctx> {
         LLVMDeleteFunction(self.as_value_ref())
     }
 
-    #[llvm_versions(4.0..=7.0)]
+    #[llvm_versions(..=7)]
     pub fn get_type(self) -> FunctionType<'ctx> {
         use crate::types::PointerType;
 
@@ -207,7 +214,7 @@ impl<'ctx> FunctionValue<'ctx> {
         ptr_type.get_element_type().into_function_type()
     }
 
-    #[llvm_versions(8.0..=latest)]
+    #[llvm_versions(8..)]
     pub fn get_type(self) -> FunctionType<'ctx> {
         unsafe { FunctionType::new(llvm_sys::core::LLVMGlobalGetValueType(self.as_value_ref())) }
     }
@@ -490,13 +497,13 @@ impl<'ctx> FunctionValue<'ctx> {
     }
 
     /// Set the debug info descriptor
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn set_subprogram(self, subprogram: DISubprogram<'ctx>) {
         unsafe { LLVMSetSubprogram(self.as_value_ref(), subprogram.metadata_ref) }
     }
 
     /// Get the debug info descriptor
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn get_subprogram(self) -> Option<DISubprogram<'ctx>> {
         let metadata_ref = unsafe { LLVMGetSubprogram(self.as_value_ref()) };
 
@@ -549,6 +556,23 @@ impl fmt::Debug for FunctionValue<'_> {
             .field("llvm_value", &llvm_value)
             .field("llvm_type", &llvm_type.print_to_string())
             .finish()
+    }
+}
+
+/// Iterate over all `BasicBlock`s in a function.
+#[derive(Debug)]
+pub struct BasicBlockIter<'ctx>(Option<BasicBlock<'ctx>>);
+
+impl<'ctx> Iterator for BasicBlockIter<'ctx> {
+    type Item = BasicBlock<'ctx>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(bb) = self.0 {
+            self.0 = bb.get_next_basic_block();
+            Some(bb)
+        } else {
+            None
+        }
     }
 }
 

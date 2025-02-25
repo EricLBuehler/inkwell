@@ -1,10 +1,15 @@
+#[llvm_versions(..17)]
+use llvm_sys::core::LLVMConstArray;
+#[llvm_versions(17..)]
+use llvm_sys::core::LLVMConstArray2 as LLVMConstArray;
 use llvm_sys::core::{LLVMGetAsString, LLVMIsAConstantArray, LLVMIsAConstantDataArray, LLVMIsConstantString};
+use llvm_sys::prelude::LLVMTypeRef;
 use llvm_sys::prelude::LLVMValueRef;
 
 use std::ffi::CStr;
 use std::fmt::{self, Display};
 
-use crate::types::ArrayType;
+use crate::types::{ArrayType, AsTypeRef};
 use crate::values::traits::{AnyValue, AsValueRef};
 use crate::values::{InstructionValue, Value};
 
@@ -15,12 +20,36 @@ pub struct ArrayValue<'ctx> {
 }
 
 impl<'ctx> ArrayValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Self {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type array.
+    pub unsafe fn new(value: LLVMValueRef) -> Self {
         assert!(!value.is_null());
 
         ArrayValue {
             array_value: Value::new(value),
         }
+    }
+
+    /// Creates a new constant `ArrayValue` with the given type and values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be of the same type as `ty`.
+    pub unsafe fn new_const_array<T: AsTypeRef, V: AsValueRef>(ty: &T, values: &[V]) -> Self {
+        let values = values.iter().map(V::as_value_ref).collect::<Vec<_>>();
+        Self::new_raw_const_array(ty.as_type_ref(), &values)
+    }
+
+    /// Creates a new constant `ArrayValue` with the given type and values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be of the same type as `ty`.
+    pub unsafe fn new_raw_const_array(ty: LLVMTypeRef, values: &[LLVMValueRef]) -> Self {
+        unsafe { Self::new(LLVMConstArray(ty, values.as_ptr().cast_mut(), values.len() as _)) }
     }
 
     /// Get name of the `ArrayValue`. If the value is a constant, this will

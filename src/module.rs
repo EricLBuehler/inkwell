@@ -4,32 +4,33 @@ use llvm_sys::analysis::{LLVMVerifierFailureAction, LLVMVerifyModule};
 #[allow(deprecated)]
 use llvm_sys::bit_reader::LLVMParseBitcodeInContext;
 use llvm_sys::bit_writer::{LLVMWriteBitcodeToFile, LLVMWriteBitcodeToMemoryBuffer};
-#[llvm_versions(4.0..=14.0)]
+#[llvm_versions(..=14)]
 use llvm_sys::core::LLVMGetTypeByName;
 
 use llvm_sys::core::{
     LLVMAddFunction, LLVMAddGlobal, LLVMAddGlobalInAddressSpace, LLVMAddNamedMetadataOperand, LLVMCloneModule,
-    LLVMDisposeModule, LLVMDumpModule, LLVMGetFirstFunction, LLVMGetFirstGlobal, LLVMGetLastFunction,
-    LLVMGetLastGlobal, LLVMGetModuleContext, LLVMGetModuleIdentifier, LLVMGetNamedFunction, LLVMGetNamedGlobal,
-    LLVMGetNamedMetadataNumOperands, LLVMGetNamedMetadataOperands, LLVMGetTarget, LLVMPrintModuleToFile,
-    LLVMPrintModuleToString, LLVMSetDataLayout, LLVMSetModuleIdentifier, LLVMSetTarget,
+    LLVMDisposeMessage, LLVMDisposeModule, LLVMDumpModule, LLVMGetFirstFunction, LLVMGetFirstGlobal,
+    LLVMGetLastFunction, LLVMGetLastGlobal, LLVMGetModuleContext, LLVMGetModuleIdentifier, LLVMGetNamedFunction,
+    LLVMGetNamedGlobal, LLVMGetNamedMetadataNumOperands, LLVMGetNamedMetadataOperands, LLVMGetTarget,
+    LLVMPrintModuleToFile, LLVMPrintModuleToString, LLVMSetDataLayout, LLVMSetModuleIdentifier, LLVMSetTarget,
 };
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use llvm_sys::core::{LLVMAddModuleFlag, LLVMGetModuleFlag};
-#[llvm_versions(13.0..=latest)]
+#[llvm_versions(13..)]
 use llvm_sys::error::LLVMGetErrorMessage;
 use llvm_sys::execution_engine::{
     LLVMCreateExecutionEngineForModule, LLVMCreateInterpreterForModule, LLVMCreateJITCompilerForModule,
+    LLVMCreateSimpleMCJITMemoryManager,
 };
 use llvm_sys::prelude::{LLVMModuleRef, LLVMValueRef};
-#[llvm_versions(13.0..=latest)]
+#[llvm_versions(13..)]
 use llvm_sys::transforms::pass_builder::LLVMRunPasses;
 use llvm_sys::LLVMLinkage;
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use llvm_sys::LLVMModuleFlagBehavior;
 
 use std::cell::{Cell, Ref, RefCell};
-use std::ffi::CStr;
+use std::ffi::{c_void, CStr};
 use std::fs::File;
 use std::marker::PhantomData;
 use std::mem::{forget, MaybeUninit};
@@ -37,22 +38,26 @@ use std::path::Path;
 use std::ptr;
 use std::rc::Rc;
 
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use crate::comdat::Comdat;
 use crate::context::{AsContextRef, Context, ContextRef};
 use crate::data_layout::DataLayout;
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use crate::debug_info::{DICompileUnit, DWARFEmissionKind, DWARFSourceLanguage, DebugInfoBuilder};
 use crate::execution_engine::ExecutionEngine;
 use crate::memory_buffer::MemoryBuffer;
-#[llvm_versions(13.0..=latest)]
+use crate::memory_manager::{
+    allocate_code_section_adapter, allocate_data_section_adapter, destroy_adapter, finalize_memory_adapter,
+    McjitMemoryManager, MemoryManagerAdapter,
+};
+#[llvm_versions(13..)]
 use crate::passes::PassBuilderOptions;
 use crate::support::{to_c_str, LLVMString};
-#[llvm_versions(13.0..=latest)]
+#[llvm_versions(13..)]
 use crate::targets::TargetMachine;
-use crate::targets::{InitializationConfig, Target, TargetTriple};
+use crate::targets::{CodeModel, InitializationConfig, Target, TargetTriple};
 use crate::types::{AsTypeRef, BasicType, FunctionType, StructType};
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use crate::values::BasicValue;
 use crate::values::{AsValueRef, FunctionValue, GlobalValue, MetadataValue};
 use crate::{AddressSpace, OptimizationLevel};
@@ -173,7 +178,12 @@ pub struct Module<'ctx> {
 }
 
 impl<'ctx> Module<'ctx> {
-    pub(crate) unsafe fn new(module: LLVMModuleRef) -> Self {
+    /// Get a module from an [LLVMModuleRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid.
+    pub unsafe fn new(module: LLVMModuleRef) -> Self {
         debug_assert!(!module.is_null());
 
         Module {
@@ -351,7 +361,7 @@ impl<'ctx> Module<'ctx> {
     /// assert_eq!(module.get_struct_type("foo").unwrap(), opaque);
     /// ```
     ///
-    #[llvm_versions(4.0..=11.0)]
+    #[llvm_versions(..=11)]
     pub fn get_struct_type(&self, name: &str) -> Option<StructType<'ctx>> {
         let c_string = to_c_str(name);
 
@@ -380,7 +390,7 @@ impl<'ctx> Module<'ctx> {
     ///
     /// assert_eq!(module.get_struct_type("foo").unwrap(), opaque);
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_struct_type(&self, name: &str) -> Option<StructType<'ctx>> {
         self.get_context().get_struct_type(name)
     }
@@ -604,6 +614,134 @@ impl<'ctx> Module<'ctx> {
         Ok(execution_engine)
     }
 
+    /// Creates an MCJIT `ExecutionEngine` for this `Module` using a custom memory manager.
+    ///
+    /// # Parameters
+    ///
+    /// * `memory_manager` - Specifies how LLVM allocates and finalizes code and data sections.
+    ///   Implement the [`McjitMemoryManager`] trait to customize these operations.
+    /// * `opt_level` - Sets the desired optimization level (e.g. `None`, `Less`, `Default`, `Aggressive`).
+    ///   Higher levels generally produce faster code at the expense of longer compilation times.
+    /// * `code_model` - Determines how code addresses are represented. Common values include
+    ///   `CodeModel::Default` or `CodeModel::JITDefault`. This impacts the generated machine code layout.
+    /// * `no_frame_pointer_elim` - If true, frame pointer elimination is disabled. This may assist
+    ///   with certain debugging or profiling tasks but can incur a performance cost.
+    /// * `enable_fast_isel` - If true, uses a faster instruction selector where possible. This can
+    ///   improve compilation speed, though it may produce less optimized code in some cases.
+    ///
+    /// # Returns
+    ///
+    /// Returns a newly created [`ExecutionEngine`] for MCJIT on success. Returns an error if:
+    /// - The native target fails to initialize,
+    /// - The `Module` is already owned by another `ExecutionEngine`,
+    /// - Or MCJIT fails to create the engine (in which case an error string is returned from LLVM).
+    ///
+    /// # Notes
+    ///
+    /// Using a custom memory manager can help intercept or manage allocations for specific
+    /// sections (for example, capturing `.llvm_stackmaps` or applying custom permissions).
+    /// For details, refer to the [`McjitMemoryManager`] documentation.
+    ///
+    /// # Safety
+    ///
+    /// The returned [`ExecutionEngine`] takes ownership of the memory manager. Do not move
+    /// or free the `memory_manager` after calling this method. When the `ExecutionEngine`
+    /// is dropped, LLVM will destroy the memory manager by calling
+    /// [`McjitMemoryManager::destroy()`] and freeing its adapter.
+    pub fn create_mcjit_execution_engine_with_memory_manager(
+        &self,
+        memory_manager: impl McjitMemoryManager + 'static,
+        opt_level: OptimizationLevel,
+        code_model: CodeModel,
+        no_frame_pointer_elim: bool,
+        enable_fast_isel: bool,
+    ) -> Result<ExecutionEngine<'ctx>, LLVMString> {
+        use std::mem::MaybeUninit;
+        // ...
+
+        // 1) Initialize the native target
+        Target::initialize_native(&InitializationConfig::default()).map_err(|mut err_string| {
+            err_string.push('\0');
+            LLVMString::create_from_str(&err_string)
+        })?;
+
+        // Check if the module is already owned by an ExecutionEngine
+        if self.owned_by_ee.borrow().is_some() {
+            let string = "This module is already owned by an ExecutionEngine.\0";
+            return Err(LLVMString::create_from_str(string));
+        }
+
+        // 2) Box the memory_manager into a MemoryManagerAdapter
+        let adapter = MemoryManagerAdapter {
+            memory_manager: Box::new(memory_manager),
+        };
+        let adapter_box = Box::new(adapter);
+        // Convert the Box into a raw pointer for LLVM.
+        // In `destroy_adapter`, we use `Box::from_raw` to safely reclaim ownership.
+        let opaque = Box::into_raw(adapter_box) as *mut c_void;
+
+        // 3) Create the LLVMMCJITMemoryManager using the custom callbacks
+        let mmgr = unsafe {
+            LLVMCreateSimpleMCJITMemoryManager(
+                opaque,
+                allocate_code_section_adapter,
+                allocate_data_section_adapter,
+                finalize_memory_adapter,
+                Some(destroy_adapter),
+            )
+        };
+        if mmgr.is_null() {
+            let msg = "Failed to create SimpleMCJITMemoryManager.\0";
+            return Err(LLVMString::create_from_str(msg));
+        }
+
+        // 4) Build LLVMMCJITCompilerOptions
+        let mut options_uninit = MaybeUninit::<llvm_sys::execution_engine::LLVMMCJITCompilerOptions>::zeroed();
+        unsafe {
+            // Ensure defaults are initialized
+            llvm_sys::execution_engine::LLVMInitializeMCJITCompilerOptions(
+                options_uninit.as_mut_ptr(),
+                std::mem::size_of::<llvm_sys::execution_engine::LLVMMCJITCompilerOptions>(),
+            );
+        }
+        let mut options = unsafe { options_uninit.assume_init() };
+
+        // Override fields
+        options.OptLevel = opt_level as u32;
+        options.CodeModel = code_model.into();
+        options.NoFramePointerElim = no_frame_pointer_elim as i32;
+        options.EnableFastISel = enable_fast_isel as i32;
+        options.MCJMM = mmgr;
+
+        // 5) Create MCJIT
+        let mut execution_engine = MaybeUninit::uninit();
+        let mut err_string = MaybeUninit::uninit();
+        let code = unsafe {
+            llvm_sys::execution_engine::LLVMCreateMCJITCompilerForModule(
+                execution_engine.as_mut_ptr(),
+                self.module.get(),
+                &mut options,
+                std::mem::size_of::<llvm_sys::execution_engine::LLVMMCJITCompilerOptions>(),
+                err_string.as_mut_ptr(),
+            )
+        };
+
+        // If creation fails, extract the error string
+        if code == 1 {
+            unsafe {
+                return Err(LLVMString::new(err_string.assume_init()));
+            }
+        }
+
+        // Otherwise, it succeeded, so wrap the raw pointer
+        let execution_engine = unsafe { execution_engine.assume_init() };
+        let execution_engine = unsafe { ExecutionEngine::new(Rc::new(execution_engine), true) };
+
+        *self.owned_by_ee.borrow_mut() = Some(execution_engine.clone());
+
+        Ok(execution_engine)
+    }
+
     /// Creates a `GlobalValue` based on a type in an address space.
     ///
     /// # Example
@@ -643,16 +781,16 @@ impl<'ctx> Module<'ctx> {
         unsafe { GlobalValue::new(value) }
     }
 
-    /// Writes a `Module` to a `Path`.
+    /// Writes a `Module` to a file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - path to write the module's bitcode to. Must be valid Unicode.
     ///
     /// # Example
     ///
     /// ```no_run
     /// use inkwell::context::Context;
-    ///
-    /// use std::path::Path;
-    ///
-    /// let mut path = Path::new("module.bc");
     ///
     /// let context = Context::create();
     /// let module = context.create_module("my_module");
@@ -660,10 +798,13 @@ impl<'ctx> Module<'ctx> {
     /// let fn_type = void_type.fn_type(&[], false);
     ///
     /// module.add_function("my_fn", fn_type, None);
-    /// module.write_bitcode_to_path(&path);
+    /// module.write_bitcode_to_path("module.bc");
     /// ```
-    pub fn write_bitcode_to_path(&self, path: &Path) -> bool {
-        let path_str = path.to_str().expect("Did not find a valid Unicode path string");
+    pub fn write_bitcode_to_path(&self, path: impl AsRef<Path>) -> bool {
+        let path_str = path
+            .as_ref()
+            .to_str()
+            .expect("Did not find a valid Unicode path string");
         let c_string = to_c_str(path_str);
 
         unsafe { LLVMWriteBitcodeToFile(self.module.get(), c_string.as_ptr()) == 0 }
@@ -718,11 +859,12 @@ impl<'ctx> Module<'ctx> {
         unsafe { MemoryBuffer::new(memory_buffer) }
     }
 
-    /// Ensures that the current `Module` is valid, and returns a `Result`
-    /// that describes whether or not it is, returning a LLVM allocated string on error.
+    /// Check whether the current [`Module`] is valid.
+    ///
+    /// The error variant is an LLVM-allocated string.
     ///
     /// # Remarks
-    /// See also: http://llvm.org/doxygen/Analysis_2Analysis_8cpp_source.html
+    /// See also: [`LLVMVerifyModule`](https://llvm.org/doxygen/group__LLVMCAnalysis.html#ga5645aec2d95116c0432a676db77b2cb0).
     pub fn verify(&self) -> Result<(), LLVMString> {
         let mut err_str = MaybeUninit::uninit();
 
@@ -734,6 +876,8 @@ impl<'ctx> Module<'ctx> {
         if code == 1 && !err_str.is_null() {
             return unsafe { Err(LLVMString::new(err_str)) };
         }
+
+        unsafe { LLVMDisposeMessage(err_str) };
 
         Ok(())
     }
@@ -844,6 +988,7 @@ impl<'ctx> Module<'ctx> {
     }
 
     /// Prints the content of the `Module` to a `String`.
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         self.print_to_string().to_string()
     }
@@ -1233,7 +1378,7 @@ impl<'ctx> Module<'ctx> {
     /// assert_eq!(module.get_name().to_str(), Ok("my_mod"));
     /// assert_eq!(module.get_source_file_name().to_str(), Ok("my_mod.rs"));
     /// ```
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn get_source_file_name(&self) -> &CStr {
         use llvm_sys::core::LLVMGetSourceFileName;
 
@@ -1260,7 +1405,7 @@ impl<'ctx> Module<'ctx> {
     /// assert_eq!(module.get_name().to_str(), Ok("my_mod"));
     /// assert_eq!(module.get_source_file_name().to_str(), Ok("my_mod.rs"));
     /// ```
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn set_source_file_name(&self, file_name: &str) {
         use llvm_sys::core::LLVMSetSourceFileName;
 
@@ -1320,7 +1465,7 @@ impl<'ctx> Module<'ctx> {
 
     /// Gets the `Comdat` associated with a particular name. If it does not exist, it will be created.
     /// A new `Comdat` defaults to a kind of `ComdatSelectionKind::Any`.
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn get_or_insert_comdat(&self, name: &str) -> Comdat {
         use llvm_sys::comdat::LLVMGetOrInsertComdat;
 
@@ -1334,7 +1479,7 @@ impl<'ctx> Module<'ctx> {
     /// If a `BasicValue` was used to create this flag, it will be wrapped in a `MetadataValue`
     /// when returned from this function.
     // SubTypes: Might need to return Option<BVE, MV<Enum>, or MV<String>>
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn get_flag(&self, key: &str) -> Option<MetadataValue<'ctx>> {
         use llvm_sys::core::LLVMMetadataAsValue;
 
@@ -1351,7 +1496,7 @@ impl<'ctx> Module<'ctx> {
 
     /// Append a `MetadataValue` as a module wide flag. Note that using the same key twice
     /// will likely invalidate the module.
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn add_metadata_flag(&self, key: &str, behavior: FlagBehavior, flag: MetadataValue<'ctx>) {
         let md = flag.as_metadata_ref();
 
@@ -1369,7 +1514,7 @@ impl<'ctx> Module<'ctx> {
     /// Append a `BasicValue` as a module wide flag. Note that using the same key twice
     /// will likely invalidate the module.
     // REVIEW: What happens if value is not const?
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn add_basic_value_flag<BV: BasicValue<'ctx>>(&self, key: &str, behavior: FlagBehavior, flag: BV) {
         use llvm_sys::core::LLVMValueAsMetadata;
 
@@ -1387,7 +1532,7 @@ impl<'ctx> Module<'ctx> {
     }
 
     /// Strips and debug info from the module, if it exists.
-    #[llvm_versions(6.0..=latest)]
+    #[llvm_versions(6..)]
     pub fn strip_debug_info(&self) -> bool {
         use llvm_sys::debuginfo::LLVMStripModuleDebugInfo;
 
@@ -1395,7 +1540,7 @@ impl<'ctx> Module<'ctx> {
     }
 
     /// Gets the version of debug metadata contained in this `Module`.
-    #[llvm_versions(6.0..=latest)]
+    #[llvm_versions(6..)]
     pub fn get_debug_metadata_version(&self) -> libc::c_uint {
         use llvm_sys::debuginfo::LLVMGetModuleDebugMetadataVersion;
 
@@ -1403,7 +1548,7 @@ impl<'ctx> Module<'ctx> {
     }
 
     /// Creates a `DebugInfoBuilder` for this `Module`.
-    #[llvm_versions(7.0..=latest)]
+    #[llvm_versions(7..)]
     pub fn create_debug_info_builder(
         &self,
         allow_unresolved: bool,
@@ -1425,7 +1570,9 @@ impl<'ctx> Module<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sysroot: &str,
         #[cfg(any(
@@ -1434,7 +1581,9 @@ impl<'ctx> Module<'ctx> {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         sdk: &str,
     ) -> (DebugInfoBuilder<'ctx>, DICompileUnit<'ctx>) {
@@ -1459,7 +1608,9 @@ impl<'ctx> Module<'ctx> {
                 feature = "llvm13-0",
                 feature = "llvm14-0",
                 feature = "llvm15-0",
-                feature = "llvm16-0"
+                feature = "llvm16-0",
+                feature = "llvm17-0",
+                feature = "llvm18-0"
             ))]
             sysroot,
             #[cfg(any(
@@ -1468,19 +1619,25 @@ impl<'ctx> Module<'ctx> {
                 feature = "llvm13-0",
                 feature = "llvm14-0",
                 feature = "llvm15-0",
-                feature = "llvm16-0"
+                feature = "llvm16-0",
+                feature = "llvm17-0",
+                feature = "llvm18-0"
             ))]
             sdk,
         )
     }
 
     /// Construct and run a set of passes over a module.
+    ///
     /// This function takes a string with the passes that should be used.
-    /// The format of this string is the same as opt's -passes argument for the new pass manager.
+    /// The format of this string is the same as
+    /// [`opt`](https://llvm.org/docs/CommandGuide/opt.html)'s
+    /// `-{passes}` argument for the new pass manager.
     /// Individual passes may be specified, separated by commas.
-    /// Full pipelines may also be invoked using default<O3> and friends.
-    /// See opt for full reference of the Passes format.
-    #[llvm_versions(13.0..=latest)]
+    /// Full pipelines may also be invoked using `"default<O3>"` and friends.
+    /// See [`opt`](https://llvm.org/docs/CommandGuide/opt.html)
+    /// for full reference of the `passes` format.
+    #[llvm_versions(13..)]
     pub fn run_passes(
         &self,
         passes: &str,
@@ -1494,7 +1651,7 @@ impl<'ctx> Module<'ctx> {
                 machine.target_machine,
                 options.options_ref,
             );
-            if error == std::ptr::null_mut() {
+            if error.is_null() {
                 Ok(())
             } else {
                 let message = LLVMGetErrorMessage(error);
@@ -1533,7 +1690,7 @@ impl Drop for Module<'_> {
     }
 }
 
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 #[llvm_enum(LLVMModuleFlagBehavior)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 /// Defines the operational behavior for a module wide flag. This documentation comes directly
@@ -1569,24 +1726,11 @@ pub enum FlagBehavior {
 
 /// Iterate over all `FunctionValue`s in an llvm module
 #[derive(Debug)]
-pub struct FunctionIterator<'ctx>(FunctionIteratorInner<'ctx>);
-
-/// Inner type so the variants are not publicly visible
-#[derive(Debug)]
-enum FunctionIteratorInner<'ctx> {
-    Empty,
-    Start(FunctionValue<'ctx>),
-    Previous(FunctionValue<'ctx>),
-}
+pub struct FunctionIterator<'ctx>(Option<FunctionValue<'ctx>>);
 
 impl<'ctx> FunctionIterator<'ctx> {
     fn from_module(module: &Module<'ctx>) -> Self {
-        use FunctionIteratorInner::*;
-
-        match module.get_first_function() {
-            None => Self(Empty),
-            Some(first) => Self(Start(first)),
-        }
+        Self(module.get_first_function())
     }
 }
 
@@ -1594,47 +1738,22 @@ impl<'ctx> Iterator for FunctionIterator<'ctx> {
     type Item = FunctionValue<'ctx>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use FunctionIteratorInner::*;
-
-        match self.0 {
-            Empty => None,
-            Start(first) => {
-                self.0 = Previous(first);
-
-                Some(first)
-            },
-            Previous(prev) => match prev.get_next_function() {
-                Some(current) => {
-                    self.0 = Previous(current);
-
-                    Some(current)
-                },
-                None => None,
-            },
+        if let Some(func) = self.0 {
+            self.0 = func.get_next_function();
+            Some(func)
+        } else {
+            None
         }
     }
 }
 
 /// Iterate over all `GlobalValue`s in an llvm module
 #[derive(Debug)]
-pub struct GlobalIterator<'ctx>(GlobalIteratorInner<'ctx>);
-
-/// Inner type so the variants are not publicly visible
-#[derive(Debug)]
-enum GlobalIteratorInner<'ctx> {
-    Empty,
-    Start(GlobalValue<'ctx>),
-    Previous(GlobalValue<'ctx>),
-}
+pub struct GlobalIterator<'ctx>(Option<GlobalValue<'ctx>>);
 
 impl<'ctx> GlobalIterator<'ctx> {
     fn from_module(module: &Module<'ctx>) -> Self {
-        use GlobalIteratorInner::*;
-
-        match module.get_first_global() {
-            None => Self(Empty),
-            Some(first) => Self(Start(first)),
-        }
+        Self(module.get_first_global())
     }
 }
 
@@ -1642,23 +1761,11 @@ impl<'ctx> Iterator for GlobalIterator<'ctx> {
     type Item = GlobalValue<'ctx>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        use GlobalIteratorInner::*;
-
-        match self.0 {
-            Empty => None,
-            Start(first) => {
-                self.0 = Previous(first);
-
-                Some(first)
-            },
-            Previous(prev) => match prev.get_next_global() {
-                Some(current) => {
-                    self.0 = Previous(current);
-
-                    Some(current)
-                },
-                None => None,
-            },
+        if let Some(global) = self.0 {
+            self.0 = global.get_next_global();
+            Some(global)
+        } else {
+            None
         }
     }
 }
