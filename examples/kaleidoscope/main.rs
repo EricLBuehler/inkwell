@@ -1,13 +1,16 @@
 //! This is an example of the [Kaleidoscope tutorial](https://llvm.org/docs/tutorial/)
 //! made in Rust, using Inkwell.
-//! Currently, all features up to the [7th chapter](https://llvm.org/docs/tutorial/LangImpl07.html)
+//! Currently, all features up to the
+//! [7th chapter](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/LangImpl07.html)
 //! are available.
 //! This example is supposed to be ran as a executable, which launches a REPL.
 //! The source code is in the following order:
-//! - Lexer,
-//! - Parser,
-//! - Compiler,
-//! - Program.
+//! - `implementation_typed_pointers.rs`:
+//!     Lexer,
+//!     Parser,
+//!     Compiler.
+//! - `main.rs`:
+//!     Program.
 //!
 //! Both the `Parser` and the `Compiler` may fail, in which case they would return
 //! an error represented by `Result<T, &'static str>`, for easier error reporting.
@@ -16,16 +19,20 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 
 use inkwell::context::Context;
+use inkwell::module::Module;
+#[llvm_versions(..=15)]
 use inkwell::passes::PassManager;
 use inkwell::OptimizationLevel;
+#[llvm_versions(16..)]
+use inkwell::{
+    passes::PassBuilderOptions,
+    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine},
+};
 
 use inkwell_internals::llvm_versions;
 
-#[cfg(not(any(feature = "llvm15-0", feature = "llvm16-0")))]
 mod implementation_typed_pointers;
-
-#[llvm_versions(4.0..=14.0)]
-use crate::implementation_typed_pointers::*;
+pub use implementation_typed_pointers::*;
 
 // ======================================================================================
 // PROGRAM ==============================================================================
@@ -57,10 +64,52 @@ pub extern "C" fn printd(x: f64) -> f64 {
 #[used]
 static EXTERNAL_FNS: [extern "C" fn(f64) -> f64; 2] = [putchard, printd];
 
+#[llvm_versions(..=15)]
+fn run_passes_on(module: &Module) {
+    let fpm = PassManager::create(());
+
+    fpm.add_instruction_combining_pass();
+    fpm.add_reassociate_pass();
+    fpm.add_gvn_pass();
+    fpm.add_cfg_simplification_pass();
+    fpm.add_basic_alias_analysis_pass();
+    fpm.add_promote_memory_to_register_pass();
+
+    fpm.run_on(module);
+}
+
+#[llvm_versions(16..)]
+fn run_passes_on(module: &Module) {
+    Target::initialize_all(&InitializationConfig::default());
+    let target_triple = TargetMachine::get_default_triple();
+    let target = Target::from_triple(&target_triple).unwrap();
+    let target_machine = target
+        .create_target_machine(
+            &target_triple,
+            "generic",
+            "",
+            OptimizationLevel::None,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .unwrap();
+
+    let passes: &[&str] = &[
+        "instcombine",
+        "reassociate",
+        "gvn",
+        "simplifycfg",
+        // "basic-aa",
+        "mem2reg",
+    ];
+
+    module
+        .run_passes(passes.join(",").as_str(), &target_machine, PassBuilderOptions::create())
+        .unwrap();
+}
+
 /// Entry point of the program; acts as a REPL.
-#[llvm_versions(4.0..=14.0)]
 pub fn main() {
-    // use self::inkwell::support::add_symbol;
     let mut display_lexer_output = false;
     let mut display_parser_output = false;
     let mut display_compiler_output = false;
@@ -75,22 +124,7 @@ pub fn main() {
     }
 
     let context = Context::create();
-    let module = context.create_module("repl");
     let builder = context.create_builder();
-
-    // Create FPM
-    let fpm = PassManager::create(&module);
-
-    fpm.add_instruction_combining_pass();
-    fpm.add_reassociate_pass();
-    fpm.add_gvn_pass();
-    fpm.add_cfg_simplification_pass();
-    fpm.add_basic_alias_analysis_pass();
-    fpm.add_promote_memory_to_register_pass();
-    fpm.add_instruction_combining_pass();
-    fpm.add_reassociate_pass();
-
-    fpm.initialize();
 
     let mut previous_exprs = Vec::new();
 
@@ -133,11 +167,10 @@ pub fn main() {
 
         // recompile every previously parsed function into the new module
         for prev in &previous_exprs {
-            Compiler::compile(&context, &builder, &fpm, &module, prev)
-                .expect("Cannot re-add previously compiled function.");
+            Compiler::compile(&context, &builder, &module, prev).expect("Cannot re-add previously compiled function.");
         }
 
-        let (name, is_anonymous) = match Parser::new(input, &mut prec).parse() {
+        let (function, is_anonymous) = match Parser::new(input, &mut prec).parse() {
             Ok(fun) => {
                 let is_anon = fun.is_anon;
 
@@ -149,21 +182,14 @@ pub fn main() {
                     }
                 }
 
-                match Compiler::compile(&context, &builder, &fpm, &module, &fun) {
+                match Compiler::compile(&context, &builder, &module, &fun) {
                     Ok(function) => {
-                        if display_compiler_output {
-                            // Not printing a new line since LLVM automatically
-                            // prefixes the generated string with one
-                            print_flush!("-> Expression compiled to IR:");
-                            function.print_to_stderr();
-                        }
-
                         if !is_anon {
                             // only add it now to ensure it is correct
                             previous_exprs.push(fun);
                         }
 
-                        (function.get_name().to_str().unwrap().to_string(), is_anon)
+                        (function, is_anon)
                     },
                     Err(err) => {
                         println!("!> Error compiling function: {}", err);
@@ -177,10 +203,18 @@ pub fn main() {
             },
         };
 
+        run_passes_on(&module);
+
+        if display_compiler_output {
+            println!("-> Expression compiled to IR:");
+            function.print_to_stderr();
+        }
+
         if is_anonymous {
             let ee = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
 
-            let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>(name.as_str()) };
+            let fn_name = function.get_name().to_str().unwrap();
+            let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>(fn_name) };
             let compiled_fn = match maybe_fn {
                 Ok(f) => f,
                 Err(err) => {
@@ -194,9 +228,4 @@ pub fn main() {
             }
         }
     }
-}
-
-#[llvm_versions(15.0..=latest)]
-pub fn main() {
-    eprintln!("Kaleidoscope example does not work yet with this llvm version");
 }

@@ -110,8 +110,10 @@ fn test_conversion_to_pointer_value() {
     builder.position_at_end(basic_block);
 
     // Create a PointerType instruction
-    let i64_type = context.i64_type();
-    let i64_ptr_type = i64_type.ptr_type(AddressSpace::default());
+    #[cfg(feature = "typed-pointers")]
+    let i64_ptr_type = context.i64_type().ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let i64_ptr_type = context.ptr_type(AddressSpace::default());
     let alloca_instr = builder
         .build_alloca(i64_ptr_type, "alloca")
         .unwrap()

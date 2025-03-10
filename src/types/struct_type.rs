@@ -1,5 +1,5 @@
 use llvm_sys::core::{
-    LLVMConstArray, LLVMConstNamedStruct, LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMGetStructName,
+    LLVMConstNamedStruct, LLVMCountStructElementTypes, LLVMGetStructElementTypes, LLVMGetStructName,
     LLVMIsOpaqueStruct, LLVMIsPackedStruct, LLVMStructGetTypeAtIndex, LLVMStructSetBody,
 };
 use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
@@ -61,7 +61,16 @@ impl<'ctx> StructType<'ctx> {
             return None;
         }
 
-        unsafe { Some(BasicTypeEnum::new(LLVMStructGetTypeAtIndex(self.as_type_ref(), index))) }
+        Some(unsafe { self.get_field_type_at_index_unchecked(index) })
+    }
+
+    /// Gets the type of a field belonging to this `StructType`.
+    ///
+    /// # Safety
+    ///
+    /// The index must be less than [StructType::count_fields] and the struct must not be opaque.
+    pub unsafe fn get_field_type_at_index_unchecked(self, index: u32) -> BasicTypeEnum<'ctx> {
+        unsafe { BasicTypeEnum::new(LLVMStructGetTypeAtIndex(self.as_type_ref(), index)) }
     }
 
     /// Creates a `StructValue` based on this `StructType`'s definition.
@@ -192,21 +201,20 @@ impl<'ctx> StructType<'ctx> {
     /// let struct_type = context.struct_type(&[f32_type.into(), f32_type.into()], false);
     /// let struct_ptr_type = struct_type.ptr_type(AddressSpace::default());
     ///
-    /// #[cfg(any(
-    ///     feature = "llvm4-0",
-    ///     feature = "llvm5-0",
-    ///     feature = "llvm6-0",
-    ///     feature = "llvm7-0",
-    ///     feature = "llvm8-0",
-    ///     feature = "llvm9-0",
-    ///     feature = "llvm10-0",
-    ///     feature = "llvm11-0",
-    ///     feature = "llvm12-0",
-    ///     feature = "llvm13-0",
-    ///     feature = "llvm14-0"
-    /// ))]
+    /// #[cfg(feature = "typed-pointers")]
     /// assert_eq!(struct_ptr_type.get_element_type().into_struct_type(), struct_type);
     /// ```
+    #[cfg_attr(
+        any(
+            all(feature = "llvm15-0", not(feature = "typed-pointers")),
+            all(feature = "llvm16-0", not(feature = "typed-pointers")),
+            feature = "llvm17-0",
+            feature = "llvm18-0"
+        ),
+        deprecated(
+            note = "Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead."
+        )
+    )]
     pub fn ptr_type(self, address_space: AddressSpace) -> PointerType<'ctx> {
         self.struct_type.ptr_type(address_space)
     }
@@ -328,6 +336,15 @@ impl<'ctx> StructType<'ctx> {
         raw_vec.iter().map(|val| unsafe { BasicTypeEnum::new(*val) }).collect()
     }
 
+    /// Get a struct field iterator.
+    pub fn get_field_types_iter(self) -> FieldTypesIter<'ctx> {
+        FieldTypesIter {
+            st: self,
+            i: 0,
+            count: if self.is_opaque() { 0 } else { self.count_fields() },
+        }
+    }
+
     /// Print the definition of a `StructType` to `LLVMString`.
     pub fn print_to_string(self) -> LLVMString {
         self.struct_type.print_to_string()
@@ -368,7 +385,7 @@ impl<'ctx> StructType<'ctx> {
     ///
     /// assert!(struct_type_poison.is_poison());
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_poison(self) -> StructValue<'ctx> {
         unsafe { StructValue::new(self.struct_type.get_poison()) }
     }
@@ -423,14 +440,7 @@ impl<'ctx> StructType<'ctx> {
     /// assert!(struct_array.is_const());
     /// ```
     pub fn const_array(self, values: &[StructValue<'ctx>]) -> ArrayValue<'ctx> {
-        let mut values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
-        unsafe {
-            ArrayValue::new(LLVMConstArray(
-                self.as_type_ref(),
-                values.as_mut_ptr(),
-                values.len() as u32,
-            ))
-        }
+        unsafe { ArrayValue::new_const_array(&self, values) }
     }
 }
 
@@ -443,5 +453,27 @@ unsafe impl AsTypeRef for StructType<'_> {
 impl Display for StructType<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.print_to_string())
+    }
+}
+
+/// Iterate over all `BasicTypeEnum`s in a struct.
+#[derive(Debug)]
+pub struct FieldTypesIter<'ctx> {
+    st: StructType<'ctx>,
+    i: u32,
+    count: u32,
+}
+
+impl<'ctx> Iterator for FieldTypesIter<'ctx> {
+    type Item = BasicTypeEnum<'ctx>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i < self.count {
+            let result = unsafe { self.st.get_field_type_at_index_unchecked(self.i) };
+            self.i += 1;
+            Some(result)
+        } else {
+            None
+        }
     }
 }

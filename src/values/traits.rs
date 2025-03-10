@@ -1,15 +1,18 @@
 use llvm_sys::prelude::LLVMValueRef;
 
-#[llvm_versions(12.0..=latest)]
+#[llvm_versions(12..)]
 use llvm_sys::core::LLVMIsPoison;
 
 use std::fmt::Debug;
 
 use crate::support::LLVMString;
-use crate::types::{FloatMathType, FloatType, IntMathType, IntType, PointerMathType, PointerType, VectorType};
+use crate::types::{
+    FloatMathType, FloatType, IntMathType, IntType, PointerMathType, PointerType, ScalableVectorType, VectorType,
+};
 use crate::values::{
     AggregateValueEnum, AnyValueEnum, ArrayValue, BasicValueEnum, BasicValueUse, CallSiteValue, FloatValue,
-    FunctionValue, GlobalValue, InstructionValue, IntValue, PhiValue, PointerValue, StructValue, Value, VectorValue,
+    FunctionValue, GlobalValue, InstructionValue, IntValue, PhiValue, PointerValue, ScalableVectorValue, StructValue,
+    Value, VectorValue,
 };
 
 use super::{BasicMetadataValueEnum, MetadataValue};
@@ -47,6 +50,20 @@ macro_rules! math_trait_value_set {
     )
 }
 
+macro_rules! base_trait_value_set {
+    ($trait_name:ident: $($value_type:ident),*) => (
+        $(
+            unsafe impl<'ctx> $trait_name<'ctx> for $value_type<'ctx> {
+                unsafe fn new(value: LLVMValueRef) -> $value_type<'ctx> {
+                    unsafe {
+                        $value_type::new(value)
+                    }
+                }
+            }
+        )*
+    )
+}
+
 /// Represents an aggregate value, built on top of other values.
 pub unsafe trait AggregateValue<'ctx>: BasicValue<'ctx> {
     /// Returns an enum containing a typed version of the `AggregateValue`.
@@ -57,7 +74,7 @@ pub unsafe trait AggregateValue<'ctx>: BasicValue<'ctx> {
     // REVIEW: How does LLVM treat out of bound index? Maybe we should return an Option?
     // or is that only in bounds GEP
     // REVIEW: Should this be AggregatePointerValue?
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     fn const_extract_value(&self, indexes: &mut [u32]) -> BasicValueEnum<'ctx> {
         use llvm_sys::core::LLVMConstExtractValue;
 
@@ -71,7 +88,7 @@ pub unsafe trait AggregateValue<'ctx>: BasicValue<'ctx> {
     }
 
     // SubTypes: value should really be T in self: VectorValue<T> I think
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=14)]
     fn const_insert_value<BV: BasicValue<'ctx>>(&self, value: BV, indexes: &mut [u32]) -> BasicValueEnum<'ctx> {
         use llvm_sys::core::LLVMConstInsertValue;
 
@@ -135,6 +152,11 @@ pub unsafe trait PointerMathValue<'ctx>: BasicValue<'ctx> {
     unsafe fn new(value: LLVMValueRef) -> Self;
 }
 
+/// Represents a value which is permitted in vector operations, either fixed or scalable
+pub unsafe trait VectorBaseValue<'ctx>: BasicValue<'ctx> {
+    unsafe fn new(value: LLVMValueRef) -> Self;
+}
+
 // REVIEW: print_to_string might be a good candidate to live here?
 /// Defines any struct wrapping an LLVM value.
 pub unsafe trait AnyValue<'ctx>: AsValueRef + Debug {
@@ -149,15 +171,16 @@ pub unsafe trait AnyValue<'ctx>: AsValueRef + Debug {
     }
 
     /// Returns whether the value is `poison`
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     fn is_poison(&self) -> bool {
         unsafe { LLVMIsPoison(self.as_value_ref()) == 1 }
     }
 }
 
 trait_value_set! {AggregateValue: ArrayValue, AggregateValueEnum, StructValue}
-trait_value_set! {AnyValue: AnyValueEnum, BasicValueEnum, BasicMetadataValueEnum, AggregateValueEnum, ArrayValue, IntValue, FloatValue, GlobalValue, PhiValue, PointerValue, FunctionValue, StructValue, VectorValue, InstructionValue, CallSiteValue, MetadataValue}
-trait_value_set! {BasicValue: ArrayValue, BasicValueEnum, AggregateValueEnum, IntValue, FloatValue, GlobalValue, StructValue, PointerValue, VectorValue}
-math_trait_value_set! {IntMathValue: (IntValue => IntType), (VectorValue => VectorType), (PointerValue => IntType)}
-math_trait_value_set! {FloatMathValue: (FloatValue => FloatType), (VectorValue => VectorType)}
-math_trait_value_set! {PointerMathValue: (PointerValue => PointerType), (VectorValue => VectorType)}
+trait_value_set! {AnyValue: AnyValueEnum, BasicValueEnum, BasicMetadataValueEnum, AggregateValueEnum, ArrayValue, IntValue, FloatValue, GlobalValue, PhiValue, PointerValue, FunctionValue, StructValue, VectorValue, ScalableVectorValue, InstructionValue, CallSiteValue, MetadataValue}
+trait_value_set! {BasicValue: ArrayValue, BasicValueEnum, AggregateValueEnum, IntValue, FloatValue, GlobalValue, StructValue, PointerValue, VectorValue, ScalableVectorValue}
+math_trait_value_set! {IntMathValue: (IntValue => IntType), (VectorValue => VectorType), (ScalableVectorValue => ScalableVectorType), (PointerValue => IntType)}
+math_trait_value_set! {FloatMathValue: (FloatValue => FloatType), (VectorValue => VectorType), (ScalableVectorValue => ScalableVectorType)}
+math_trait_value_set! {PointerMathValue: (PointerValue => PointerType), (VectorValue => VectorType), (ScalableVectorValue => ScalableVectorType)}
+base_trait_value_set! {VectorBaseValue: VectorValue, ScalableVectorValue}

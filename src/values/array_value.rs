@@ -1,10 +1,15 @@
+#[llvm_versions(..17)]
+use llvm_sys::core::LLVMConstArray;
+#[llvm_versions(17..)]
+use llvm_sys::core::LLVMConstArray2 as LLVMConstArray;
 use llvm_sys::core::{LLVMGetAsString, LLVMIsAConstantArray, LLVMIsAConstantDataArray, LLVMIsConstantString};
+use llvm_sys::prelude::LLVMTypeRef;
 use llvm_sys::prelude::LLVMValueRef;
 
 use std::ffi::CStr;
 use std::fmt::{self, Display};
 
-use crate::types::ArrayType;
+use crate::types::{ArrayType, AsTypeRef};
 use crate::values::traits::{AnyValue, AsValueRef};
 use crate::values::{InstructionValue, Value};
 
@@ -15,12 +20,36 @@ pub struct ArrayValue<'ctx> {
 }
 
 impl<'ctx> ArrayValue<'ctx> {
-    pub(crate) unsafe fn new(value: LLVMValueRef) -> Self {
+    /// Get a value from an [LLVMValueRef].
+    ///
+    /// # Safety
+    ///
+    /// The ref must be valid and of type array.
+    pub unsafe fn new(value: LLVMValueRef) -> Self {
         assert!(!value.is_null());
 
         ArrayValue {
             array_value: Value::new(value),
         }
+    }
+
+    /// Creates a new constant `ArrayValue` with the given type and values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be of the same type as `ty`.
+    pub unsafe fn new_const_array<T: AsTypeRef, V: AsValueRef>(ty: &T, values: &[V]) -> Self {
+        let values = values.iter().map(V::as_value_ref).collect::<Vec<_>>();
+        Self::new_raw_const_array(ty.as_type_ref(), &values)
+    }
+
+    /// Creates a new constant `ArrayValue` with the given type and values.
+    ///
+    /// # Safety
+    ///
+    /// `values` must be of the same type as `ty`.
+    pub unsafe fn new_raw_const_array(ty: LLVMTypeRef, values: &[LLVMValueRef]) -> Self {
+        unsafe { Self::new(LLVMConstArray(ty, values.as_ptr().cast_mut(), values.len() as _)) }
     }
 
     /// Get name of the `ArrayValue`. If the value is a constant, this will
@@ -110,12 +139,40 @@ impl<'ctx> ArrayValue<'ctx> {
     /// use std::ffi::CStr;
     ///
     /// let context = Context::create();
+    /// let string = context.const_string(b"hello!", false);
+    ///
+    /// let result = b"hello!".as_slice();
+    /// assert_eq!(string.as_const_string(), Some(result));
+    /// ```
+    // SubTypes: Impl only for ArrayValue<IntValue<i8>>
+    pub fn as_const_string(&self) -> Option<&[u8]> {
+        let mut len = 0;
+        let ptr = unsafe { LLVMGetAsString(self.as_value_ref(), &mut len) };
+
+        if ptr.is_null() {
+            None
+        } else {
+            unsafe { Some(std::slice::from_raw_parts(ptr.cast(), len)) }
+        }
+    }
+
+    /// Obtain the string from the ArrayValue
+    /// if the value points to a constant string.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use std::ffi::CStr;
+    ///
+    /// let context = Context::create();
     /// let string = context.const_string(b"hello!", true);
     ///
     /// let result = CStr::from_bytes_with_nul(b"hello!\0").unwrap();
     /// assert_eq!(string.get_string_constant(), Some(result));
     /// ```
     // SubTypes: Impl only for ArrayValue<IntValue<i8>>
+    #[deprecated = "llvm strings can contain internal NULs, and this function truncates such values, use as_const_string instead"]
     pub fn get_string_constant(&self) -> Option<&CStr> {
         let mut len = 0;
         let ptr = unsafe { LLVMGetAsString(self.as_value_ref(), &mut len) };

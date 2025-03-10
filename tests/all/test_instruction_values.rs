@@ -1,6 +1,8 @@
 use inkwell::context::Context;
-use inkwell::types::AnyTypeEnum;
-use inkwell::values::{BasicValue, InstructionOpcode::*};
+#[cfg(not(feature = "typed-pointers"))]
+use inkwell::types::AnyType;
+use inkwell::types::{AnyTypeEnum, BasicType};
+use inkwell::values::{BasicValue, CallSiteValue, InstructionOpcode::*};
 use inkwell::{AddressSpace, AtomicOrdering, AtomicRMWBinOp, FloatPredicate, IntPredicate};
 
 #[test]
@@ -11,7 +13,10 @@ fn test_operands() {
     let builder = context.create_builder();
     let void_type = context.void_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let f32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[f32_ptr_type.into()], false);
 
     let function = module.add_function("take_f32_ptr", fn_type, None);
@@ -20,7 +25,7 @@ fn test_operands() {
     builder.position_at_end(basic_block);
 
     let arg1 = function.get_first_param().unwrap().into_pointer_value();
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
     let store_instruction = builder.build_store(arg1, f32_val).unwrap();
     let free_instruction = builder.build_free(arg1).unwrap();
     let return_instruction = builder.build_return(None).unwrap();
@@ -34,6 +39,8 @@ fn test_operands() {
     // Test operands
     assert_eq!(store_instruction.get_num_operands(), 2);
     assert_eq!(free_instruction.get_num_operands(), 2);
+    assert_eq!(store_instruction.get_operands().count(), 2);
+    assert_eq!(free_instruction.get_operands().count(), 2);
 
     let store_operand0 = store_instruction.get_operand(0).unwrap();
     let store_operand1 = store_instruction.get_operand(1).unwrap();
@@ -43,6 +50,14 @@ fn test_operands() {
     assert!(store_instruction.get_operand(2).is_none());
     assert!(store_instruction.get_operand(3).is_none());
     assert!(store_instruction.get_operand(4).is_none());
+
+    let mut store_operands = store_instruction.get_operands();
+    let store_operand0 = store_operands.next().unwrap().unwrap();
+    let store_operand1 = store_operands.next().unwrap().unwrap();
+
+    assert_eq!(store_operand0.left().unwrap(), f32_val); // f32 const
+    assert_eq!(store_operand1.left().unwrap(), arg1); // f32* arg1
+    assert!(store_operands.next().is_none());
 
     let free_operand0 = free_instruction.get_operand(0).unwrap().left().unwrap();
     let free_operand1 = free_instruction.get_operand(1).unwrap().left().unwrap();
@@ -64,19 +79,7 @@ fn test_operands() {
     assert!(free_instruction.set_operand(0, arg1));
 
     // Module is no longer valid because free takes an i8* not f32*
-    #[cfg(any(
-        feature = "llvm4-0",
-        feature = "llvm5-0",
-        feature = "llvm6-0",
-        feature = "llvm7-0",
-        feature = "llvm8-0",
-        feature = "llvm9-0",
-        feature = "llvm10-0",
-        feature = "llvm11-0",
-        feature = "llvm12-0",
-        feature = "llvm13-0",
-        feature = "llvm14-0"
-    ))]
+    #[cfg(feature = "typed-pointers")]
     assert!(module.verify().is_err());
 
     assert!(free_instruction.set_operand(0, free_operand0));
@@ -89,12 +92,13 @@ fn test_operands() {
     assert!(module.verify().is_ok());
 
     assert_eq!(return_instruction.get_num_operands(), 0);
+    assert_eq!(return_instruction.get_operands().count(), 0);
     assert!(return_instruction.get_operand(0).is_none());
     assert!(return_instruction.get_operand(1).is_none());
     assert!(return_instruction.get_operand(2).is_none());
 
     // Test Uses
-    let bitcast_use_value = free_operand0_instruction
+    let bit_cast_use_value = free_operand0_instruction
         .get_first_use()
         .unwrap()
         .get_used_value()
@@ -102,7 +106,7 @@ fn test_operands() {
         .unwrap();
     let free_call_param = free_instruction.get_operand(0).unwrap().left().unwrap();
 
-    assert_eq!(bitcast_use_value, free_call_param);
+    assert_eq!(bit_cast_use_value, free_call_param);
 
     // These instructions/calls don't return any ir value so they aren't used anywhere
     assert!(store_instruction.get_first_use().is_none());
@@ -139,6 +143,27 @@ fn test_operands() {
     assert!(store_instruction.get_operand_use(4).is_none());
     assert!(store_instruction.get_operand_use(5).is_none());
     assert!(store_instruction.get_operand_use(6).is_none());
+
+    // However their operands are used
+    let mut store_operand_uses = store_instruction.get_operand_uses();
+    let store_operand_use0 = store_operand_uses.next().unwrap().unwrap();
+    let store_operand_use1 = store_operand_uses.next().unwrap().unwrap();
+
+    assert!(store_operand_use0.get_next_use().is_none());
+    assert!(store_operand_use1.get_next_use().is_none());
+    assert_eq!(store_operand_use1, arg1_second_use);
+
+    assert_eq!(
+        store_operand_use0.get_user().into_instruction_value(),
+        store_instruction
+    );
+    assert_eq!(
+        store_operand_use1.get_user().into_instruction_value(),
+        store_instruction
+    );
+    assert_eq!(store_operand_use0.get_used_value().left().unwrap(), f32_val);
+    assert_eq!(store_operand_use1.get_used_value().left().unwrap(), arg1);
+    assert!(store_operand_uses.next().is_none());
 
     let free_operand_use0 = free_instruction.get_operand_use(0).unwrap();
     let free_operand_use1 = free_instruction.get_operand_use(1).unwrap();
@@ -195,7 +220,7 @@ fn test_get_next_use() {
     builder.position_at_end(basic_block);
 
     let arg1 = function.get_first_param().unwrap().into_float_value();
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
     let add_pi0 = builder.build_float_add(arg1, f32_val, "add_pi").unwrap();
     let add_pi1 = builder.build_float_add(add_pi0, f32_val, "add_pi").unwrap();
 
@@ -222,7 +247,10 @@ fn test_instructions() {
     let void_type = context.void_type();
     let i64_type = context.i64_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let f32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[f32_ptr_type.into(), f32_type.into()], false);
 
     let function = module.add_function("free_f32", fn_type, None);
@@ -236,9 +264,10 @@ fn test_instructions() {
     assert!(arg1.get_first_use().is_none());
     assert!(arg2.get_first_use().is_none());
 
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
 
     let store_instruction = builder.build_store(arg1, f32_val).unwrap();
+    let alloca_val = builder.build_alloca(i64_type, "alloca").unwrap();
     let ptr_val = builder.build_ptr_to_int(arg1, i64_type, "ptr_val").unwrap();
     let ptr = builder.build_int_to_ptr(ptr_val, f32_ptr_type, "ptr").unwrap();
     let icmp = builder.build_int_compare(IntPredicate::EQ, arg1, arg1, "icmp").unwrap();
@@ -248,7 +277,35 @@ fn test_instructions() {
         .unwrap();
     let free_instruction = builder.build_free(arg1).unwrap();
     let return_instruction = builder.build_return(None).unwrap();
+    let cond_br_instruction = builder
+        .build_conditional_branch(i64_type.const_zero(), basic_block, basic_block)
+        .unwrap();
 
+    #[cfg(not(feature = "typed-pointers"))]
+    {
+        let gep_instr = unsafe { builder.build_gep(i64_type, alloca_val, &vec![], "gep").unwrap() };
+        assert_eq!(
+            gep_instr
+                .as_instruction_value()
+                .unwrap()
+                .get_gep_source_element_type()
+                .unwrap()
+                .as_any_type_enum(),
+            i64_type.as_any_type_enum()
+        );
+    }
+    assert_eq!(
+        alloca_val.as_instruction().unwrap().get_allocated_type(),
+        Ok(i64_type.as_basic_type_enum())
+    );
+    assert!(store_instruction.get_allocated_type().is_err());
+    assert!(!store_instruction.is_terminator());
+    assert!(return_instruction.is_terminator());
+    assert!(!store_instruction.is_conditional());
+    assert!(!return_instruction.is_conditional());
+    assert!(cond_br_instruction.is_conditional());
+    assert!(TryInto::<CallSiteValue>::try_into(free_instruction).is_ok());
+    assert!(TryInto::<CallSiteValue>::try_into(return_instruction).is_err());
     assert_eq!(store_instruction.get_opcode(), Store);
     assert_eq!(ptr_val.as_instruction().unwrap().get_opcode(), PtrToInt);
     assert_eq!(ptr.as_instruction().unwrap().get_opcode(), IntToPtr);
@@ -279,7 +336,7 @@ fn test_instructions() {
 
     // test instruction cloning
     #[allow(clippy::redundant_clone)]
-    let instruction_clone = return_instruction.clone();
+    let instruction_clone = return_instruction.explicit_clone();
 
     assert_eq!(instruction_clone.get_opcode(), return_instruction.get_opcode());
     assert_ne!(instruction_clone, return_instruction);
@@ -290,7 +347,7 @@ fn test_instructions() {
     assert_eq!(instruction_clone, instruction_clone_copy);
 }
 
-#[llvm_versions(10.0..=latest)]
+#[llvm_versions(10..)]
 #[test]
 fn test_volatile_atomicrmw_cmpxchg() {
     let context = Context::create();
@@ -299,7 +356,10 @@ fn test_volatile_atomicrmw_cmpxchg() {
 
     let void_type = context.void_type();
     let i32_type = context.i32_type();
+    #[cfg(feature = "typed-pointers")]
     let i32_ptr_type = i32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let i32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[i32_ptr_type.into(), i32_type.into()], false);
 
     let function = module.add_function("mem_inst", fn_type, None);
@@ -332,19 +392,19 @@ fn test_volatile_atomicrmw_cmpxchg() {
         .as_instruction_value()
         .unwrap();
 
-    assert_eq!(atomicrmw.get_volatile().unwrap(), false);
-    assert_eq!(cmpxchg.get_volatile().unwrap(), false);
+    assert!(!atomicrmw.get_volatile().unwrap());
+    assert!(!cmpxchg.get_volatile().unwrap());
     atomicrmw.set_volatile(true).unwrap();
     cmpxchg.set_volatile(true).unwrap();
-    assert_eq!(atomicrmw.get_volatile().unwrap(), true);
-    assert_eq!(cmpxchg.get_volatile().unwrap(), true);
+    assert!(atomicrmw.get_volatile().unwrap());
+    assert!(cmpxchg.get_volatile().unwrap());
     atomicrmw.set_volatile(false).unwrap();
     cmpxchg.set_volatile(false).unwrap();
-    assert_eq!(atomicrmw.get_volatile().unwrap(), false);
-    assert_eq!(cmpxchg.get_volatile().unwrap(), false);
+    assert!(!atomicrmw.get_volatile().unwrap());
+    assert!(!cmpxchg.get_volatile().unwrap());
 }
 
-#[llvm_versions(4.0..=10.0)]
+#[llvm_versions(..=10)]
 #[test]
 fn test_mem_instructions() {
     let context = Context::create();
@@ -353,7 +413,10 @@ fn test_mem_instructions() {
 
     let void_type = context.void_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let f32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[f32_ptr_type.into(), f32_type.into()], false);
 
     let function = module.add_function("mem_inst", fn_type, None);
@@ -367,7 +430,7 @@ fn test_mem_instructions() {
     assert!(arg1.get_first_use().is_none());
     assert!(arg2.get_first_use().is_none());
 
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
 
     let store_instruction = builder.build_store(arg1, f32_val).unwrap();
     let load = builder.build_load(arg1, "").unwrap();
@@ -409,7 +472,7 @@ fn test_mem_instructions() {
     assert!(fadd_instruction.set_alignment(16).is_err());
 }
 
-#[llvm_versions(11.0..=latest)]
+#[llvm_versions(12..)]
 #[test]
 fn test_mem_instructions() {
     let context = Context::create();
@@ -418,7 +481,10 @@ fn test_mem_instructions() {
 
     let void_type = context.void_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let f32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[f32_ptr_type.into(), f32_type.into()], false);
 
     let function = module.add_function("mem_inst", fn_type, None);
@@ -432,37 +498,25 @@ fn test_mem_instructions() {
     assert!(arg1.get_first_use().is_none());
     assert!(arg2.get_first_use().is_none());
 
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
 
     let store_instruction = builder.build_store(arg1, f32_val).unwrap();
-    #[cfg(any(
-        feature = "llvm4-0",
-        feature = "llvm5-0",
-        feature = "llvm6-0",
-        feature = "llvm7-0",
-        feature = "llvm8-0",
-        feature = "llvm9-0",
-        feature = "llvm10-0",
-        feature = "llvm11-0",
-        feature = "llvm12-0",
-        feature = "llvm13-0",
-        feature = "llvm14-0"
-    ))]
+    #[cfg(feature = "typed-pointers")]
     let load = builder.build_load(arg1, "").unwrap();
-    #[cfg(any(feature = "llvm15-0", feature = "llvm16-0"))]
+    #[cfg(not(feature = "typed-pointers"))]
     let load = builder.build_load(f32_type, arg1, "").unwrap();
     let load_instruction = load.as_instruction_value().unwrap();
 
-    assert_eq!(store_instruction.get_volatile().unwrap(), false);
-    assert_eq!(load_instruction.get_volatile().unwrap(), false);
+    assert!(!store_instruction.get_volatile().unwrap());
+    assert!(!load_instruction.get_volatile().unwrap());
     store_instruction.set_volatile(true).unwrap();
     load_instruction.set_volatile(true).unwrap();
-    assert_eq!(store_instruction.get_volatile().unwrap(), true);
-    assert_eq!(load_instruction.get_volatile().unwrap(), true);
+    assert!(store_instruction.get_volatile().unwrap());
+    assert!(load_instruction.get_volatile().unwrap());
     store_instruction.set_volatile(false).unwrap();
     load_instruction.set_volatile(false).unwrap();
-    assert_eq!(store_instruction.get_volatile().unwrap(), false);
-    assert_eq!(load_instruction.get_volatile().unwrap(), false);
+    assert!(!store_instruction.get_volatile().unwrap());
+    assert!(!load_instruction.get_volatile().unwrap());
 
     assert_eq!(store_instruction.get_alignment().unwrap(), 4);
     assert_eq!(load_instruction.get_alignment().unwrap(), 4);
@@ -497,7 +551,10 @@ fn test_atomic_ordering_mem_instructions() {
 
     let void_type = context.void_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let f32_ptr_type = context.ptr_type(AddressSpace::default());
     let fn_type = void_type.fn_type(&[f32_ptr_type.into(), f32_type.into()], false);
 
     let function = module.add_function("mem_inst", fn_type, None);
@@ -511,24 +568,12 @@ fn test_atomic_ordering_mem_instructions() {
     assert!(arg1.get_first_use().is_none());
     assert!(arg2.get_first_use().is_none());
 
-    let f32_val = f32_type.const_float(::std::f64::consts::PI);
+    let f32_val = f32_type.const_float(std::f64::consts::PI);
 
     let store_instruction = builder.build_store(arg1, f32_val).unwrap();
-    #[cfg(any(
-        feature = "llvm4-0",
-        feature = "llvm5-0",
-        feature = "llvm6-0",
-        feature = "llvm7-0",
-        feature = "llvm8-0",
-        feature = "llvm9-0",
-        feature = "llvm10-0",
-        feature = "llvm11-0",
-        feature = "llvm12-0",
-        feature = "llvm13-0",
-        feature = "llvm14-0"
-    ))]
+    #[cfg(feature = "typed-pointers")]
     let load = builder.build_load(arg1, "").unwrap();
-    #[cfg(any(feature = "llvm15-0", feature = "llvm16-0"))]
+    #[cfg(not(feature = "typed-pointers"))]
     let load = builder.build_load(f32_type, arg1, "").unwrap();
     let load_instruction = load.as_instruction_value().unwrap();
 
@@ -572,7 +617,10 @@ fn test_metadata_kinds() {
 
     let i8_type = context.i8_type();
     let f32_type = context.f32_type();
+    #[cfg(feature = "typed-pointers")]
     let ptr_type = i8_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let ptr_type = context.ptr_type(AddressSpace::default());
     let struct_type = context.struct_type(&[i8_type.into(), f32_type.into()], false);
     let vector_type = i8_type.vec_type(2);
 
@@ -606,7 +654,10 @@ fn test_find_instruction_with_name() {
 
     let void_type = context.void_type();
     let i32_type = context.i32_type();
+    #[cfg(feature = "typed-pointers")]
     let i32_ptr_type = i32_type.ptr_type(AddressSpace::default());
+    #[cfg(not(feature = "typed-pointers"))]
+    let i32_ptr_type = context.ptr_type(AddressSpace::default());
 
     let fn_type = void_type.fn_type(&[i32_ptr_type.into()], false);
     let fn_value = module.add_function("ret", fn_type, None);
@@ -614,7 +665,7 @@ fn test_find_instruction_with_name() {
     builder.position_at_end(entry);
 
     let var = builder.build_alloca(i32_type, "some_number").unwrap();
-    builder.build_store(var, i32_type.const_int(1 as u64, false)).unwrap();
+    builder.build_store(var, i32_type.const_int(1, false)).unwrap();
     builder.build_return(None).unwrap();
 
     let block = fn_value.get_first_basic_block().unwrap();
@@ -622,4 +673,132 @@ fn test_find_instruction_with_name() {
 
     assert!(some_number.is_some());
     assert_eq!(some_number.unwrap().get_name().unwrap().to_str(), Ok("some_number"))
+}
+
+#[llvm_versions(18..)]
+#[test]
+fn test_fast_math_flags() {
+    let context = Context::create();
+    let module = context.create_module("testing");
+
+    let void_type = context.void_type();
+    let i32_type = context.i32_type();
+    let f32_type = context.f32_type();
+    let fn_type = void_type.fn_type(&[i32_type.into(), f32_type.into()], false);
+
+    let builder = context.create_builder();
+    let function = module.add_function("fast_math", fn_type, None);
+    let basic_block = context.append_basic_block(function, "entry");
+
+    builder.position_at_end(basic_block);
+
+    let arg1 = function.get_first_param().unwrap().into_int_value();
+    let arg2 = function.get_nth_param(1).unwrap().into_float_value();
+
+    let i32_addition = builder
+        .build_int_add(arg1, i32_type.const_int(123, false), "i32_addition")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    assert!(!i32_addition.can_use_fast_math_flags());
+
+    i32_addition.set_fast_math_flags(1);
+    assert_eq!(i32_addition.get_fast_math_flags(), None);
+
+    let f32_addition = builder
+        .build_float_add(arg2, f32_type.const_float(123.0), "f32_addition")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    assert!(f32_addition.can_use_fast_math_flags());
+    assert_eq!(f32_addition.get_fast_math_flags(), Some(0));
+
+    f32_addition.set_fast_math_flags(1);
+    assert_eq!(f32_addition.get_fast_math_flags(), Some(1));
+}
+
+#[llvm_versions(18..)]
+#[test]
+fn test_zext_non_negative_flag() {
+    let context = Context::create();
+    let module = context.create_module("testing");
+
+    let void_type = context.void_type();
+    let i32_type = context.i32_type();
+    let i64_type = context.i64_type();
+    let fn_type = void_type.fn_type(&[i32_type.into()], false);
+
+    let builder = context.create_builder();
+    let function = module.add_function("zext_nneg", fn_type, None);
+    let basic_block = context.append_basic_block(function, "entry");
+
+    builder.position_at_end(basic_block);
+
+    let arg1 = function.get_first_param().unwrap().into_int_value();
+
+    let i32_zext = builder
+        .build_int_z_extend(arg1, i64_type, "i32_zext")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    assert_eq!(i32_zext.get_non_negative_flag(), Some(false));
+
+    i32_zext.set_non_negative_flag(true);
+
+    assert_eq!(i32_zext.get_non_negative_flag(), Some(true));
+
+    let i32_sext = builder
+        .build_int_s_extend(arg1, i64_type, "i32_sext")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    i32_sext.set_non_negative_flag(true);
+
+    assert_eq!(i32_sext.get_non_negative_flag(), None);
+}
+
+#[llvm_versions(18..)]
+#[test]
+fn test_or_disjoint_flag() {
+    let context = Context::create();
+    let module = context.create_module("testing");
+
+    let void_type = context.void_type();
+    let i32_type = context.i32_type();
+    let fn_type = void_type.fn_type(&[i32_type.into(), i32_type.into()], false);
+
+    let builder = context.create_builder();
+    let function = module.add_function("disjoint_or", fn_type, None);
+    let basic_block = context.append_basic_block(function, "entry");
+
+    builder.position_at_end(basic_block);
+
+    let arg1 = function.get_first_param().unwrap().into_int_value();
+    let arg2 = function.get_nth_param(1).unwrap().into_int_value();
+
+    let i32_or = builder
+        .build_or(arg1, arg2, "i32_or")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    assert_eq!(i32_or.get_disjoint_flag(), Some(false));
+
+    i32_or.set_disjoint_flag(true);
+
+    assert_eq!(i32_or.get_disjoint_flag(), Some(true));
+
+    let i32_and = builder
+        .build_and(arg1, arg2, "i32_and")
+        .unwrap()
+        .as_instruction_value()
+        .unwrap();
+
+    i32_and.set_disjoint_flag(true);
+
+    assert_eq!(i32_and.get_disjoint_flag(), None);
 }

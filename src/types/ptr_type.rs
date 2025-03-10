@@ -1,13 +1,15 @@
-use llvm_sys::core::{LLVMConstArray, LLVMGetPointerAddressSpace};
-use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+use llvm_sys::core::LLVMGetPointerAddressSpace;
+#[llvm_versions(15..)]
+use llvm_sys::core::LLVMPointerTypeIsOpaque;
+use llvm_sys::prelude::LLVMTypeRef;
 
 use crate::context::ContextRef;
 use crate::support::LLVMString;
 use crate::types::traits::AsTypeRef;
-#[llvm_versions(4.0..=14.0)]
+#[cfg(feature = "typed-pointers")]
 use crate::types::AnyTypeEnum;
-use crate::types::{ArrayType, FunctionType, Type, VectorType};
-use crate::values::{ArrayValue, AsValueRef, IntValue, PointerValue};
+use crate::types::{ArrayType, FunctionType, ScalableVectorType, Type, VectorType};
+use crate::values::{ArrayValue, IntValue, PointerValue};
 use crate::AddressSpace;
 
 use crate::types::enums::BasicMetadataTypeEnum;
@@ -42,7 +44,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_type_size = f32_ptr_type.size_of();
     /// ```
     pub fn size_of(self) -> IntValue<'ctx> {
@@ -59,7 +64,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_type_alignment = f32_ptr_type.get_alignment();
     /// ```
     pub fn get_alignment(self) -> IntValue<'ctx> {
@@ -76,24 +84,26 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_ptr_type = f32_ptr_type.ptr_type(AddressSpace::default());
     ///
-    /// #[cfg(any(
-    ///     feature = "llvm4-0",
-    ///     feature = "llvm5-0",
-    ///     feature = "llvm6-0",
-    ///     feature = "llvm7-0",
-    ///     feature = "llvm8-0",
-    ///     feature = "llvm9-0",
-    ///     feature = "llvm10-0",
-    ///     feature = "llvm11-0",
-    ///     feature = "llvm12-0",
-    ///     feature = "llvm13-0",
-    ///     feature = "llvm14-0"
-    /// ))]
+    /// #[cfg(feature = "typed-pointers")]
     /// assert_eq!(f32_ptr_ptr_type.get_element_type().into_pointer_type(), f32_ptr_type);
     /// ```
+    #[cfg_attr(
+        any(
+            all(feature = "llvm15-0", not(feature = "typed-pointers")),
+            all(feature = "llvm16-0", not(feature = "typed-pointers")),
+            feature = "llvm17-0",
+            feature = "llvm18-0"
+        ),
+        deprecated(
+            note = "Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead."
+        )
+    )]
     pub fn ptr_type(self, address_space: AddressSpace) -> PointerType<'ctx> {
         self.ptr_type.ptr_type(address_space)
     }
@@ -108,7 +118,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     ///
     /// assert_eq!(f32_ptr_type.get_context(), context);
     /// ```
@@ -127,7 +140,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let fn_type = f32_ptr_type.fn_type(&[], false);
     /// ```
     pub fn fn_type(self, param_types: &[BasicMetadataTypeEnum<'ctx>], is_var_args: bool) -> FunctionType<'ctx> {
@@ -144,7 +160,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_array_type = f32_ptr_type.array_type(3);
     ///
     /// assert_eq!(f32_ptr_array_type.len(), 3);
@@ -164,7 +183,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     ///
     /// assert_eq!(f32_ptr_type.get_address_space(), AddressSpace::default());
     /// ```
@@ -190,7 +212,10 @@ impl<'ctx> PointerType<'ctx> {
     /// // Local Context
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_null = f32_ptr_type.const_null();
     ///
     /// assert!(f32_ptr_null.is_null());
@@ -212,7 +237,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_zero = f32_ptr_type.const_zero();
     /// ```
     pub fn const_zero(self) -> PointerValue<'ctx> {
@@ -228,7 +256,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_undef = f32_ptr_type.get_undef();
     ///
     /// assert!(f32_ptr_undef.is_undef());
@@ -247,12 +278,15 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_undef = f32_ptr_type.get_poison();
     ///
     /// assert!(f32_ptr_undef.is_poison());
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_poison(self) -> PointerValue<'ctx> {
         unsafe { PointerValue::new(self.ptr_type.get_poison()) }
     }
@@ -267,7 +301,10 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_vec_type = f32_ptr_type.vec_type(3);
     ///
     /// assert_eq!(f32_ptr_vec_type.get_size(), 3);
@@ -275,6 +312,30 @@ impl<'ctx> PointerType<'ctx> {
     /// ```
     pub fn vec_type(self, size: u32) -> VectorType<'ctx> {
         self.ptr_type.vec_type(size)
+    }
+
+    /// Creates a `ScalableVectorType` with this `PointerType` for its element type.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::AddressSpace;
+    ///
+    /// let context = Context::create();
+    /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
+    /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
+    /// let f32_ptr_scalable_vec_type = f32_ptr_type.scalable_vec_type(3);
+    ///
+    /// assert_eq!(f32_ptr_scalable_vec_type.get_size(), 3);
+    /// assert_eq!(f32_ptr_scalable_vec_type.get_element_type().into_pointer_type(), f32_ptr_type);
+    /// ```
+    #[llvm_versions(12..)]
+    pub fn scalable_vec_type(self, size: u32) -> ScalableVectorType<'ctx> {
+        self.ptr_type.scalable_vec_type(size)
     }
 
     // SubType: PointerrType<BT> -> BT?
@@ -288,11 +349,15 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     ///
     /// assert_eq!(f32_ptr_type.get_element_type().into_float_type(), f32_type);
     /// ```
-    #[llvm_versions(4.0..=14.0)]
+    #[llvm_versions(..=16)]
+    #[cfg(feature = "typed-pointers")]
     pub fn get_element_type(self) -> AnyTypeEnum<'ctx> {
         self.ptr_type.get_element_type()
     }
@@ -306,21 +371,23 @@ impl<'ctx> PointerType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let f32_ptr_type = context.ptr_type(AddressSpace::default());
     /// let f32_ptr_val = f32_ptr_type.const_null();
     /// let f32_ptr_array = f32_ptr_type.const_array(&[f32_ptr_val, f32_ptr_val]);
     ///
     /// assert!(f32_ptr_array.is_const());
     /// ```
     pub fn const_array(self, values: &[PointerValue<'ctx>]) -> ArrayValue<'ctx> {
-        let mut values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
-        unsafe {
-            ArrayValue::new(LLVMConstArray(
-                self.as_type_ref(),
-                values.as_mut_ptr(),
-                values.len() as u32,
-            ))
-        }
+        unsafe { ArrayValue::new_const_array(&self, values) }
+    }
+
+    /// Determine whether this pointer is opaque.
+    #[llvm_versions(15..)]
+    pub fn is_opaque(self) -> bool {
+        unsafe { LLVMPointerTypeIsOpaque(self.ptr_type.ty) != 0 }
     }
 }
 

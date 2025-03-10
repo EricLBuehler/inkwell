@@ -6,8 +6,7 @@ use inkwell::values::AnyValue;
 use inkwell::OptimizationLevel;
 
 use std::env::temp_dir;
-use std::fs::{remove_file, File};
-use std::io::Read;
+use std::fs::{self, remove_file};
 use std::path::Path;
 
 #[test]
@@ -24,11 +23,7 @@ fn test_write_bitcode_to_path() {
     module.add_function("my_fn", fn_type, None);
     module.write_bitcode_to_path(&path);
 
-    let mut contents = Vec::new();
-    let mut file = File::open(&path).expect("Could not open temp file");
-
-    file.read_to_end(&mut contents).expect("Unable to verify written file");
-
+    let contents = fs::read(&path).expect("Could not read back written file.");
     assert!(!contents.is_empty());
 
     remove_file(&path).unwrap();
@@ -259,12 +254,10 @@ fn test_parse_from_buffer() {
 fn test_parse_from_path() {
     let context = Context::create();
     let garbage_path = Path::new("foo/bar");
-    let module_result = Module::parse_bitcode_from_path(&garbage_path, &context);
-
+    let module_result = Module::parse_bitcode_from_path(garbage_path, &context);
     assert!(module_result.is_err(), "1");
 
-    let module_result2 = Module::parse_bitcode_from_path(&garbage_path, &context);
-
+    let module_result2 = Module::parse_bitcode_from_path(garbage_path, &context);
     assert!(module_result2.is_err(), "2");
 
     let module = context.create_module("mod");
@@ -457,7 +450,7 @@ fn test_metadata_flags() {
         assert!(module.get_flag("some_key").is_some());
 
         let f64_type = context.f64_type();
-        let f64_val = f64_type.const_float(3.14);
+        let f64_val = f64_type.const_float(std::f64::consts::PI);
 
         assert!(module.get_flag("some_key2").is_none());
 

@@ -288,7 +288,10 @@ impl<'ctx> BasicBlock<'ctx> {
     ///
     /// let void_type = context.void_type();
     /// let i32_type = context.i32_type();
+    /// #[cfg(feature = "typed-pointers")]
     /// let i32_ptr_type = i32_type.ptr_type(AddressSpace::default());
+    /// #[cfg(not(feature = "typed-pointers"))]
+    /// let i32_ptr_type = context.ptr_type(AddressSpace::default());
     ///
     /// let fn_type = void_type.fn_type(&[i32_ptr_type.into()], false);
     /// let fn_value = module.add_function("ret", fn_type, None);
@@ -344,6 +347,11 @@ impl<'ctx> BasicBlock<'ctx> {
         }
 
         unsafe { Some(InstructionValue::new(value)) }
+    }
+
+    /// Get an instruction iterator
+    pub fn get_instructions(self) -> InstructionIter<'ctx> {
+        InstructionIter(self.get_first_instruction())
     }
 
     /// Removes this `BasicBlock` from its parent `FunctionValue`.
@@ -473,7 +481,13 @@ impl<'ctx> BasicBlock<'ctx> {
         {
             use llvm_sys::core::LLVMSetValueName2;
 
-            unsafe { LLVMSetValueName2(LLVMBasicBlockAsValue(self.basic_block), c_string.as_ptr(), name.len()) };
+            unsafe {
+                LLVMSetValueName2(
+                    LLVMBasicBlockAsValue(self.basic_block),
+                    c_string.as_ptr(),
+                    c_string.to_bytes().len(),
+                )
+            };
         }
     }
 
@@ -595,5 +609,22 @@ impl fmt::Debug for BasicBlock<'_> {
             .field("llvm_value", &llvm_value)
             .field("llvm_type", &llvm_type)
             .finish()
+    }
+}
+
+/// Iterate over all `InstructionValue`s in a basic block.
+#[derive(Debug)]
+pub struct InstructionIter<'ctx>(Option<InstructionValue<'ctx>>);
+
+impl<'ctx> Iterator for InstructionIter<'ctx> {
+    type Item = InstructionValue<'ctx>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(instr) = self.0 {
+            self.0 = instr.get_next_instruction();
+            Some(instr)
+        } else {
+            None
+        }
     }
 }

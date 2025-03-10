@@ -1,28 +1,33 @@
 //! A `Context` is an opaque owner and manager of core global data.
 
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use crate::InlineAsmDialect;
 use libc::c_void;
-#[llvm_versions(4.0..=6.0)]
+#[llvm_versions(..=6)]
 use llvm_sys::core::LLVMConstInlineAsm;
-#[llvm_versions(12.0..=latest)]
+#[cfg(all(any(feature = "llvm15-0", feature = "llvm16-0"), feature = "typed-pointers"))]
+use llvm_sys::core::LLVMContextSetOpaquePointers;
+#[llvm_versions(12..)]
 use llvm_sys::core::LLVMCreateTypeAttribute;
-#[llvm_versions(7.0..=latest)]
+#[llvm_versions(7..)]
 use llvm_sys::core::LLVMGetInlineAsm;
-#[llvm_versions(12.0..=latest)]
+#[llvm_versions(12..)]
 use llvm_sys::core::LLVMGetTypeByName2;
-#[llvm_versions(6.0..=latest)]
+#[llvm_versions(6..)]
 use llvm_sys::core::LLVMMetadataTypeInContext;
+#[cfg(not(feature = "typed-pointers"))]
+use llvm_sys::core::LLVMPointerTypeInContext;
 use llvm_sys::core::{
     LLVMAppendBasicBlockInContext, LLVMConstStringInContext, LLVMConstStructInContext, LLVMContextCreate,
     LLVMContextDispose, LLVMContextSetDiagnosticHandler, LLVMCreateBuilderInContext, LLVMCreateEnumAttribute,
     LLVMCreateStringAttribute, LLVMDoubleTypeInContext, LLVMFP128TypeInContext, LLVMFloatTypeInContext,
     LLVMGetGlobalContext, LLVMGetMDKindIDInContext, LLVMHalfTypeInContext, LLVMInsertBasicBlockInContext,
     LLVMInt16TypeInContext, LLVMInt1TypeInContext, LLVMInt32TypeInContext, LLVMInt64TypeInContext,
-    LLVMInt8TypeInContext, LLVMIntTypeInContext, LLVMMDNodeInContext, LLVMMDStringInContext,
-    LLVMModuleCreateWithNameInContext, LLVMPPCFP128TypeInContext, LLVMStructCreateNamed, LLVMStructTypeInContext,
-    LLVMVoidTypeInContext, LLVMX86FP80TypeInContext,
+    LLVMInt8TypeInContext, LLVMIntTypeInContext, LLVMModuleCreateWithNameInContext, LLVMPPCFP128TypeInContext,
+    LLVMStructCreateNamed, LLVMStructTypeInContext, LLVMVoidTypeInContext, LLVMX86FP80TypeInContext,
 };
+#[allow(deprecated)]
+use llvm_sys::core::{LLVMMDNodeInContext, LLVMMDStringInContext};
 use llvm_sys::ir_reader::LLVMParseIRInContext;
 use llvm_sys::prelude::{LLVMContextRef, LLVMDiagnosticInfoRef, LLVMTypeRef, LLVMValueRef};
 use llvm_sys::target::{LLVMIntPtrTypeForASInContext, LLVMIntPtrTypeInContext};
@@ -36,10 +41,12 @@ use crate::memory_buffer::MemoryBuffer;
 use crate::module::Module;
 use crate::support::{to_c_str, LLVMString};
 use crate::targets::TargetData;
-#[llvm_versions(12.0..=latest)]
+#[llvm_versions(12..)]
 use crate::types::AnyTypeEnum;
-#[llvm_versions(6.0..=latest)]
+#[llvm_versions(6..)]
 use crate::types::MetadataType;
+#[cfg(not(feature = "typed-pointers"))]
+use crate::types::PointerType;
 use crate::types::{AsTypeRef, BasicTypeEnum, FloatType, FunctionType, IntType, StructType, VoidType};
 use crate::values::{
     ArrayValue, AsValueRef, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, MetadataValue, PointerValue,
@@ -68,12 +75,17 @@ thread_local! {
 }
 
 /// This struct allows us to share method impls across Context and ContextRef types
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct ContextImpl(pub(crate) LLVMContextRef);
 
 impl ContextImpl {
     pub(crate) unsafe fn new(context: LLVMContextRef) -> Self {
         assert!(!context.is_null());
+
+        #[cfg(all(any(feature = "llvm15-0", feature = "llvm16-0"), feature = "typed-pointers"))]
+        unsafe {
+            LLVMContextSetOpaquePointers(context, 0)
+        };
 
         ContextImpl(context)
     }
@@ -202,7 +214,7 @@ impl ContextImpl {
         unsafe { IntType::new(LLVMIntTypeInContext(self.0, bits)) }
     }
 
-    #[llvm_versions(6.0..=latest)]
+    #[llvm_versions(6..)]
     fn metadata_type<'ctx>(&self) -> MetadataType<'ctx> {
         unsafe { MetadataType::new(LLVMMetadataTypeInContext(self.0)) }
     }
@@ -242,6 +254,11 @@ impl ContextImpl {
         unsafe { FloatType::new(LLVMPPCFP128TypeInContext(self.0)) }
     }
 
+    #[cfg(not(feature = "typed-pointers"))]
+    fn ptr_type<'ctx>(&self, address_space: AddressSpace) -> PointerType<'ctx> {
+        unsafe { PointerType::new(LLVMPointerTypeInContext(self.0, address_space.0)) }
+    }
+
     fn struct_type<'ctx>(&self, field_types: &[BasicTypeEnum], packed: bool) -> StructType<'ctx> {
         let mut field_types: Vec<LLVMTypeRef> = field_types.iter().map(|val| val.as_type_ref()).collect();
         unsafe {
@@ -260,7 +277,7 @@ impl ContextImpl {
         unsafe { StructType::new(LLVMStructCreateNamed(self.0, c_string.as_ptr())) }
     }
 
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     fn get_struct_type<'ctx>(&self, name: &str) -> Option<StructType<'ctx>> {
         let c_string = to_c_str(name);
 
@@ -321,6 +338,7 @@ impl ContextImpl {
         }
     }
 
+    #[allow(deprecated)]
     fn metadata_node<'ctx>(&self, values: &[BasicMetadataValueEnum<'ctx>]) -> MetadataValue<'ctx> {
         let mut tuple_values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
         unsafe {
@@ -332,10 +350,17 @@ impl ContextImpl {
         }
     }
 
+    #[allow(deprecated)]
     fn metadata_string<'ctx>(&self, string: &str) -> MetadataValue<'ctx> {
         let c_string = to_c_str(string);
 
-        unsafe { MetadataValue::new(LLVMMDStringInContext(self.0, c_string.as_ptr(), string.len() as u32)) }
+        unsafe {
+            MetadataValue::new(LLVMMDStringInContext(
+                self.0,
+                c_string.as_ptr(),
+                c_string.to_bytes().len() as u32,
+            ))
+        }
     }
 
     fn get_kind_id(&self, key: &str) -> u32 {
@@ -358,7 +383,7 @@ impl ContextImpl {
         }
     }
 
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     fn create_type_attribute(&self, kind_id: u32, type_ref: AnyTypeEnum) -> Attribute {
         unsafe { Attribute::new(LLVMCreateTypeAttribute(self.0, kind_id, type_ref.as_type_ref())) }
     }
@@ -407,7 +432,22 @@ pub struct Context {
 unsafe impl Send for Context {}
 
 impl Context {
-    pub(crate) unsafe fn new(context: LLVMContextRef) -> Self {
+    /// Get raw [`LLVMContextRef`].
+    ///
+    /// This function is exposed only for interoperability with other LLVM IR libraries.
+    /// It's not intended to be used by most users.
+    pub fn raw(&self) -> LLVMContextRef {
+        self.context.0
+    }
+
+    /// Creates a new `Context` from [`LLVMContextRef`].
+    ///
+    /// # Safety
+    ///
+    /// This function is exposed only for interoperability with other LLVM IR libraries.
+    /// It's not intended to be used by most users, hence marked as unsafe.
+    /// Use [`Context::create`] instead.
+    pub unsafe fn new(context: LLVMContextRef) -> Self {
         Context {
             context: ContextImpl::new(context),
         }
@@ -569,7 +609,7 @@ impl Context {
     ///     builder.build_call(callable_value, params, "exit").unwrap();
     /// }
     ///
-    /// #[cfg(any(feature = "llvm15-0", feature = "llvm16-0"))]
+    /// #[cfg(any(feature = "llvm15-0", feature = "llvm16-0", feature = "llvm17-0", feature = "llvm18-0"))]
     /// builder.build_indirect_call(asm_fn, asm, params, "exit").unwrap();
     ///
     /// builder.build_return(None).unwrap();
@@ -778,7 +818,7 @@ impl Context {
     /// assert_eq!(md_type.get_context(), context);
     /// ```
     #[inline]
-    #[llvm_versions(6.0..=latest)]
+    #[llvm_versions(6..)]
     pub fn metadata_type(&self) -> MetadataType {
         self.context.metadata_type()
     }
@@ -917,6 +957,26 @@ impl Context {
         self.context.ppc_f128_type()
     }
 
+    /// Gets the `PointerType`. It will be assigned the current context.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::AddressSpace;
+    ///
+    /// let context = Context::create();
+    /// let ptr_type = context.ptr_type(AddressSpace::default());
+    ///
+    /// assert_eq!(ptr_type.get_address_space(), AddressSpace::default());
+    /// assert_eq!(ptr_type.get_context(), context);
+    /// ```
+    #[cfg(not(feature = "typed-pointers"))]
+    #[inline]
+    pub fn ptr_type(&self, address_space: AddressSpace) -> PointerType {
+        self.context.ptr_type(address_space)
+    }
+
     /// Creates a `StructType` definition from heterogeneous types in the current `Context`.
     ///
     /// # Example
@@ -972,7 +1032,7 @@ impl Context {
     /// assert_eq!(context.get_struct_type("foo").unwrap(), opaque);
     /// ```
     #[inline]
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_struct_type<'ctx>(&self, name: &str) -> Option<StructType<'ctx>> {
         self.context.get_struct_type(name)
     }
@@ -1240,7 +1300,7 @@ impl Context {
     /// assert_ne!(type_attribute.get_type_value(), context.i64_type().as_any_type_enum());
     /// ```
     #[inline]
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn create_type_attribute(&self, kind_id: u32, type_ref: AnyTypeEnum) -> Attribute {
         self.context.create_type_attribute(kind_id, type_ref)
     }
@@ -1284,14 +1344,28 @@ impl Drop for Context {
 }
 
 /// A `ContextRef` is a smart pointer allowing borrowed access to a type's `Context`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ContextRef<'ctx> {
     pub(crate) context: ContextImpl,
     _marker: PhantomData<&'ctx Context>,
 }
 
 impl<'ctx> ContextRef<'ctx> {
-    pub(crate) unsafe fn new(context: LLVMContextRef) -> Self {
+    /// Get raw [`LLVMContextRef`].
+    ///
+    /// This function is exposed only for interoperability with other LLVM IR libraries.
+    /// It's not intended to be used by most users.
+    pub fn raw(&self) -> LLVMContextRef {
+        self.context.0
+    }
+
+    /// Creates a new `ContextRef` from [`LLVMContextRef`].
+    ///
+    /// # Safety
+    ///
+    /// This function is exposed only for interoperability with other LLVM IR libraries.
+    /// It's not intended to be used by most users, hence marked as unsafe.
+    pub unsafe fn new(context: LLVMContextRef) -> Self {
         ContextRef {
             context: ContextImpl::new(context),
             _marker: PhantomData,
@@ -1417,7 +1491,7 @@ impl<'ctx> ContextRef<'ctx> {
     ///     builder.build_call(callable_value, params, "exit").unwrap();
     /// }
     ///
-    /// #[cfg(any(feature = "llvm15-0", feature = "llvm16-0"))]
+    /// #[cfg(any(feature = "llvm15-0", feature = "llvm16-0", feature = "llvm17-0", feature = "llvm18-0"))]
     /// builder.build_indirect_call(asm_fn, asm, params, "exit").unwrap();
     ///
     /// builder.build_return(None).unwrap();
@@ -1626,7 +1700,7 @@ impl<'ctx> ContextRef<'ctx> {
     /// assert_eq!(md_type.get_context(), context);
     /// ```
     #[inline]
-    #[llvm_versions(6.0..=latest)]
+    #[llvm_versions(6..)]
     pub fn metadata_type(&self) -> MetadataType<'ctx> {
         self.context.metadata_type()
     }
@@ -1765,6 +1839,26 @@ impl<'ctx> ContextRef<'ctx> {
         self.context.ppc_f128_type()
     }
 
+    /// Gets the `PointerType`. It will be assigned the current context.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    /// use inkwell::AddressSpace;
+    ///
+    /// let context = Context::create();
+    /// let ptr_type = context.ptr_type(AddressSpace::default());
+    ///
+    /// assert_eq!(ptr_type.get_address_space(), AddressSpace::default());
+    /// assert_eq!(ptr_type.get_context(), context);
+    /// ```
+    #[cfg(not(feature = "typed-pointers"))]
+    #[inline]
+    pub fn ptr_type(&self, address_space: AddressSpace) -> PointerType<'ctx> {
+        self.context.ptr_type(address_space)
+    }
+
     /// Creates a `StructType` definition from heterogeneous types in the current `Context`.
     ///
     /// # Example
@@ -1820,7 +1914,7 @@ impl<'ctx> ContextRef<'ctx> {
     /// assert_eq!(context.get_struct_type("foo").unwrap(), opaque);
     /// ```
     #[inline]
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_struct_type(&self, name: &str) -> Option<StructType<'ctx>> {
         self.context.get_struct_type(name)
     }
@@ -2077,7 +2171,7 @@ impl<'ctx> ContextRef<'ctx> {
     /// assert_ne!(type_attribute.get_type_value(), context.i64_type().as_any_type_enum());
     /// ```
     #[inline]
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn create_type_attribute(&self, kind_id: u32, type_ref: AnyTypeEnum) -> Attribute {
         self.context.create_type_attribute(kind_id, type_ref)
     }

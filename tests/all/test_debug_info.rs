@@ -31,7 +31,9 @@ fn test_smoke() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -40,7 +42,9 @@ fn test_smoke() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -117,7 +121,9 @@ fn test_struct_with_placeholders() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -126,7 +132,9 @@ fn test_struct_with_placeholders() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -169,8 +177,8 @@ fn test_struct_with_placeholders() {
         )
         .unwrap();
 
-    let member_sizes = vec![32, 64, 32, 64];
-    let member_types = vec![i32ty, i64ty, f32ty, f64ty];
+    let member_sizes = [32, 64, 32, 64];
+    let member_types = [i32ty, i64ty, f32ty, f64ty];
     let member_placeholders = member_types
         .iter()
         .map(|_ty| unsafe { dibuilder.create_placeholder_derived_type(&context) })
@@ -245,7 +253,9 @@ fn test_no_explicit_finalize() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -254,7 +264,9 @@ fn test_no_explicit_finalize() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -264,7 +276,7 @@ fn test_no_explicit_finalize() {
     assert!(module.verify().is_ok());
 }
 
-#[llvm_versions(8.0..=latest)]
+#[llvm_versions(8..)]
 #[test]
 fn test_replacing_placeholder_with_placeholder() {
     let context = Context::create();
@@ -290,7 +302,9 @@ fn test_replacing_placeholder_with_placeholder() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -299,7 +313,9 @@ fn test_replacing_placeholder_with_placeholder() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -349,7 +365,9 @@ fn test_anonymous_basic_type() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -358,7 +376,9 @@ fn test_anonymous_basic_type() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -375,7 +395,7 @@ fn test_anonymous_basic_type() {
     );
 }
 
-#[llvm_versions(8.0..=latest)]
+#[llvm_versions(8..)]
 #[test]
 fn test_global_expressions() {
     let context = Context::create();
@@ -401,7 +421,9 @@ fn test_global_expressions() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -410,7 +432,9 @@ fn test_global_expressions() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -471,7 +495,9 @@ fn test_pointer_types() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -480,7 +506,9 @@ fn test_pointer_types() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -525,7 +553,9 @@ fn test_reference_types() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -534,7 +564,9 @@ fn test_reference_types() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -555,6 +587,7 @@ fn test_reference_types() {
 }
 
 #[test]
+#[allow(clippy::single_range_in_vec_init)]
 fn test_array_type() {
     let context = Context::create();
     let module = context.create_module("bin");
@@ -579,7 +612,9 @@ fn test_array_type() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
         #[cfg(any(
@@ -588,7 +623,9 @@ fn test_array_type() {
             feature = "llvm13-0",
             feature = "llvm14-0",
             feature = "llvm15-0",
-            feature = "llvm16-0"
+            feature = "llvm16-0",
+            feature = "llvm17-0",
+            feature = "llvm18-0"
         ))]
         "",
     );
@@ -604,7 +641,7 @@ fn test_array_type() {
         .unwrap()
         .as_type();
 
-    //Smoke test that the array gets created
+    // Smoke test that the array gets created.
     dibuilder.create_array_type(di_type, 160, 64, &[(0..20)]);
 
     dibuilder.create_array_type(di_type, 160, 64, &[(0..20), (-1..30), (20..55)]);

@@ -1,12 +1,13 @@
-use llvm_sys::core::{LLVMConstArray, LLVMGetArrayLength};
-use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+#[allow(deprecated)]
+use llvm_sys::core::LLVMGetArrayLength;
+use llvm_sys::prelude::LLVMTypeRef;
 
 use crate::context::ContextRef;
 use crate::support::LLVMString;
 use crate::types::enums::BasicMetadataTypeEnum;
 use crate::types::traits::AsTypeRef;
 use crate::types::{BasicTypeEnum, FunctionType, PointerType, Type};
-use crate::values::{ArrayValue, AsValueRef, IntValue};
+use crate::values::{ArrayValue, IntValue};
 use crate::AddressSpace;
 
 use std::fmt::{self, Display};
@@ -76,21 +77,20 @@ impl<'ctx> ArrayType<'ctx> {
     /// let i8_array_type = i8_type.array_type(3);
     /// let i8_array_ptr_type = i8_array_type.ptr_type(AddressSpace::default());
     ///
-    /// #[cfg(any(
-    ///     feature = "llvm4-0",
-    ///     feature = "llvm5-0",
-    ///     feature = "llvm6-0",
-    ///     feature = "llvm7-0",
-    ///     feature = "llvm8-0",
-    ///     feature = "llvm9-0",
-    ///     feature = "llvm10-0",
-    ///     feature = "llvm11-0",
-    ///     feature = "llvm12-0",
-    ///     feature = "llvm13-0",
-    ///     feature = "llvm14-0"
-    /// ))]
+    /// #[cfg(feature = "typed-pointers")]
     /// assert_eq!(i8_array_ptr_type.get_element_type().into_array_type(), i8_array_type);
     /// ```
+    #[cfg_attr(
+        any(
+            all(feature = "llvm15-0", not(feature = "typed-pointers")),
+            all(feature = "llvm16-0", not(feature = "typed-pointers")),
+            feature = "llvm17-0",
+            feature = "llvm18-0"
+        ),
+        deprecated(
+            note = "Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead."
+        )
+    )]
     pub fn ptr_type(self, address_space: AddressSpace) -> PointerType<'ctx> {
         self.array_type.ptr_type(address_space)
     }
@@ -147,7 +147,7 @@ impl<'ctx> ArrayType<'ctx> {
         self.array_type.array_type(size)
     }
 
-    /// Creates a constant `ArrayValue`.
+    /// Creates a constant `ArrayValue` of `ArrayValue`s.
     ///
     /// # Example
     /// ```no_run
@@ -162,14 +162,7 @@ impl<'ctx> ArrayType<'ctx> {
     /// assert!(f32_array_array.is_const());
     /// ```
     pub fn const_array(self, values: &[ArrayValue<'ctx>]) -> ArrayValue<'ctx> {
-        let mut values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
-        unsafe {
-            ArrayValue::new(LLVMConstArray(
-                self.as_type_ref(),
-                values.as_mut_ptr(),
-                values.len() as u32,
-            ))
-        }
+        unsafe { ArrayValue::new_const_array(&self, values) }
     }
 
     /// Creates a constant zero value of this `ArrayType`.
@@ -202,7 +195,15 @@ impl<'ctx> ArrayType<'ctx> {
     /// assert_eq!(i8_array_type.len(), 3);
     /// ```
     pub fn len(self) -> u32 {
-        unsafe { LLVMGetArrayLength(self.as_type_ref()) }
+        #[allow(deprecated)]
+        unsafe {
+            LLVMGetArrayLength(self.as_type_ref())
+        }
+    }
+
+    /// Returns `true` if this `ArrayType` contains no elements.
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
     }
 
     /// Print the definition of an `ArrayType` to `LLVMString`
@@ -241,7 +242,7 @@ impl<'ctx> ArrayType<'ctx> {
     ///
     /// assert!(i8_array_poison.is_poison());
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_poison(self) -> ArrayValue<'ctx> {
         unsafe { ArrayValue::new(self.array_type.get_poison()) }
     }
@@ -261,7 +262,7 @@ impl<'ctx> ArrayType<'ctx> {
     /// assert_eq!(i8_array_type.get_element_type().into_int_type(), i8_type);
     /// ```
     pub fn get_element_type(self) -> BasicTypeEnum<'ctx> {
-        self.array_type.get_element_type().to_basic_type_enum()
+        self.array_type.get_element_type().as_basic_type_enum()
     }
 }
 

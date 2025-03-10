@@ -1,13 +1,13 @@
-use llvm_sys::core::{LLVMConstArray, LLVMConstReal, LLVMConstRealOfStringAndSize};
+use llvm_sys::core::{LLVMConstReal, LLVMConstRealOfStringAndSize};
 use llvm_sys::execution_engine::LLVMCreateGenericValueOfFloat;
-use llvm_sys::prelude::{LLVMTypeRef, LLVMValueRef};
+use llvm_sys::prelude::LLVMTypeRef;
 
 use crate::context::ContextRef;
 use crate::support::LLVMString;
 use crate::types::enums::BasicMetadataTypeEnum;
 use crate::types::traits::AsTypeRef;
-use crate::types::{ArrayType, FunctionType, PointerType, Type, VectorType};
-use crate::values::{ArrayValue, AsValueRef, FloatValue, GenericValue, IntValue};
+use crate::types::{ArrayType, FunctionType, PointerType, ScalableVectorType, Type, VectorType};
+use crate::values::{ArrayValue, FloatValue, GenericValue, IntValue};
 use crate::AddressSpace;
 
 use std::fmt::{self, Display};
@@ -64,7 +64,7 @@ impl<'ctx> FloatType<'ctx> {
         self.float_type.array_type(size)
     }
 
-    /// Creates a `VectorType` with this `FloatType` for its element type.
+    /// Creates a `ScalableVectorType` with this `FloatType` for its element type.
     ///
     /// # Example
     ///
@@ -73,13 +73,32 @@ impl<'ctx> FloatType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f32_type = context.f32_type();
-    /// let f32_vector_type = f32_type.vec_type(3);
+    /// let f32_scalable_vector_type = f32_type.vec_type(3);
+    ///
+    /// assert_eq!(f32_scalable_vector_type.get_size(), 3);
+    /// assert_eq!(f32_scalable_vector_type.get_element_type().into_float_type(), f32_type);
+    /// ```
+    pub fn vec_type(self, size: u32) -> VectorType<'ctx> {
+        self.float_type.vec_type(size)
+    }
+
+    /// Creates a scalable `VectorType` with this `FloatType` for its element type.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use inkwell::context::Context;
+    ///
+    /// let context = Context::create();
+    /// let f32_type = context.f32_type();
+    /// let f32_vector_type = f32_type.scalable_vec_type(3);
     ///
     /// assert_eq!(f32_vector_type.get_size(), 3);
     /// assert_eq!(f32_vector_type.get_element_type().into_float_type(), f32_type);
     /// ```
-    pub fn vec_type(self, size: u32) -> VectorType<'ctx> {
-        self.float_type.vec_type(size)
+    #[llvm_versions(12..)]
+    pub fn scalable_vec_type(self, size: u32) -> ScalableVectorType<'ctx> {
+        self.float_type.scalable_vec_type(size)
     }
 
     /// Creates a `FloatValue` representing a constant value of this `FloatType`.
@@ -98,8 +117,10 @@ impl<'ctx> FloatType<'ctx> {
         unsafe { FloatValue::new(LLVMConstReal(self.float_type.ty, value)) }
     }
 
-    /// Create a `FloatValue` from a string. LLVM provides no error handling here,
-    /// so this may produce unexpected results and should not be relied upon for validation.
+    // We could make this safe again by doing the validation for users.
+    /// Create a `FloatValue` from a string. This function is marked unsafe because LLVM
+    /// provides no error handling here, so this may produce undefined behavior if an invalid
+    /// string is used.
     ///
     /// # Example
     ///
@@ -109,27 +130,25 @@ impl<'ctx> FloatType<'ctx> {
     ///
     /// let context = Context::create();
     /// let f64_type = context.f64_type();
-    /// let f64_val = f64_type.const_float_from_string("3.6");
+    /// let f64_val = unsafe { f64_type.const_float_from_string("3.6") };
     ///
     /// assert_eq!(f64_val.print_to_string().to_string(), "double 3.600000e+00");
     ///
-    /// let f64_val = f64_type.const_float_from_string("3.");
+    /// let f64_val = unsafe { f64_type.const_float_from_string("3.") };
     ///
     /// assert_eq!(f64_val.print_to_string().to_string(), "double 3.000000e+00");
     ///
-    /// let f64_val = f64_type.const_float_from_string("3");
+    /// let f64_val = unsafe { f64_type.const_float_from_string("3") };
     ///
     /// assert_eq!(f64_val.print_to_string().to_string(), "double 3.000000e+00");
     ///
-    /// let f64_val = f64_type.const_float_from_string("");
-    ///
-    /// assert_eq!(f64_val.print_to_string().to_string(), "double 0.000000e+00");
-    ///
-    /// let f64_val = f64_type.const_float_from_string("3.asd");
+    /// let f64_val = unsafe { f64_type.const_float_from_string("3.asd") };
     ///
     /// assert_eq!(f64_val.print_to_string().to_string(), "double 0x7FF0000000000000");
     /// ```
-    pub fn const_float_from_string(self, slice: &str) -> FloatValue<'ctx> {
+    pub unsafe fn const_float_from_string(self, slice: &str) -> FloatValue<'ctx> {
+        assert!(!slice.is_empty());
+
         unsafe {
             FloatValue::new(LLVMConstRealOfStringAndSize(
                 self.as_type_ref(),
@@ -215,21 +234,20 @@ impl<'ctx> FloatType<'ctx> {
     /// let f32_type = context.f32_type();
     /// let f32_ptr_type = f32_type.ptr_type(AddressSpace::default());
     ///
-    /// #[cfg(any(
-    ///     feature = "llvm4-0",
-    ///     feature = "llvm5-0",
-    ///     feature = "llvm6-0",
-    ///     feature = "llvm7-0",
-    ///     feature = "llvm8-0",
-    ///     feature = "llvm9-0",
-    ///     feature = "llvm10-0",
-    ///     feature = "llvm11-0",
-    ///     feature = "llvm12-0",
-    ///     feature = "llvm13-0",
-    ///     feature = "llvm14-0"
-    /// ))]
+    /// #[cfg(feature = "typed-pointers")]
     /// assert_eq!(f32_ptr_type.get_element_type().into_float_type(), f32_type);
     /// ```
+    #[cfg_attr(
+        any(
+            all(feature = "llvm15-0", not(feature = "typed-pointers")),
+            all(feature = "llvm16-0", not(feature = "typed-pointers")),
+            feature = "llvm17-0",
+            feature = "llvm18-0"
+        ),
+        deprecated(
+            note = "Starting from version 15.0, LLVM doesn't differentiate between pointer types. Use Context::ptr_type instead."
+        )
+    )]
     pub fn ptr_type(self, address_space: AddressSpace) -> PointerType<'ctx> {
         self.float_type.ptr_type(address_space)
     }
@@ -268,7 +286,7 @@ impl<'ctx> FloatType<'ctx> {
     ///
     /// assert!(f32_poison.is_poison());
     /// ```
-    #[llvm_versions(12.0..=latest)]
+    #[llvm_versions(12..)]
     pub fn get_poison(&self) -> FloatValue<'ctx> {
         unsafe { FloatValue::new(self.float_type.get_poison()) }
     }
@@ -293,14 +311,7 @@ impl<'ctx> FloatType<'ctx> {
     /// assert!(f32_array.is_const());
     /// ```
     pub fn const_array(self, values: &[FloatValue<'ctx>]) -> ArrayValue<'ctx> {
-        let mut values: Vec<LLVMValueRef> = values.iter().map(|val| val.as_value_ref()).collect();
-        unsafe {
-            ArrayValue::new(LLVMConstArray(
-                self.as_type_ref(),
-                values.as_mut_ptr(),
-                values.len() as u32,
-            ))
-        }
+        unsafe { ArrayValue::new_const_array(&self, values) }
     }
 }
 
